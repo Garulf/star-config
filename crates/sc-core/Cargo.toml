@@ -1,0 +1,27 @@
+[package]
+name = "sc-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+toml.workspace = true
+sha2.workspace = true
+sysinfo.workspace = true
+directories.workspace = true
+similar.workspace = true
+quick-xml.workspace = true
+ureq.workspace = true
+serde_json.workspace = true
+zip.workspace = true
+image.workspace = true
+trash.workspace = true
+reflink-copy.workspace = true
+walkdir.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

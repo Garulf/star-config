@@ -1,0 +1,1 @@
+//! StarStrings localization support.
