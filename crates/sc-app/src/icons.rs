@@ -23,4 +23,5 @@ icons! {
     UNDO => "undo-2",
     SEARCH => "search",
     INFO => "info",
+    PLUS => "plus",
 }
