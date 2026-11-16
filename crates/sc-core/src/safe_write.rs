@@ -96,6 +96,31 @@ pub(crate) fn sync_file(path: &Path) -> std::io::Result<()> {
         .sync_all()
 }
 
+#[cfg(not(windows))]
+fn replace(temp: &Path, target: &Path) -> std::io::Result<()> {
+    fs::rename(temp, target)
+}
+
+// Windows refuses the rename while a virus scanner, the indexer or another writer holds the
+// target open, and they let go a moment later.
+#[cfg(windows)]
+fn replace(temp: &Path, target: &Path) -> std::io::Result<()> {
+    const SHARING_VIOLATION: i32 = 32;
+    const LOCK_VIOLATION: i32 = 33;
+    for attempt in 1..10u64 {
+        match fs::rename(temp, target) {
+            Err(err)
+                if err.kind() == ErrorKind::PermissionDenied
+                    || matches!(err.raw_os_error(), Some(SHARING_VIOLATION | LOCK_VIOLATION)) =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10 * attempt));
+            }
+            outcome => return outcome,
+        }
+    }
+    fs::rename(temp, target)
+}
+
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let target = link_destination(path);
     let parent = target.parent().filter(|dir| !dir.as_os_str().is_empty());
@@ -103,7 +128,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         fs::create_dir_all(dir).map_err(|err| Error::io(path, err))?;
     }
     let (temp, file) = create_temp(&target).map_err(|err| Error::io(path, err))?;
-    let written = fill_temp(file, &temp, &target, bytes).and_then(|()| fs::rename(&temp, &target));
+    let written = fill_temp(file, &temp, &target, bytes).and_then(|()| replace(&temp, &target));
     if let Err(err) = written {
         let _ = fs::remove_file(&temp);
         return Err(Error::io(path, err));
