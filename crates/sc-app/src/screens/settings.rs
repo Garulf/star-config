@@ -38,6 +38,9 @@ pub enum Message {
     Detected(Option<String>),
     OpenBackups,
     Opened(Result<(), String>),
+    ChooseShaderFolder,
+    ShaderFolderPicked(Option<PathBuf>),
+    DefaultShaderFolder,
 }
 
 fn keep_of(settings: &Settings) -> u32 {
@@ -134,6 +137,21 @@ impl State {
             Message::OpenBackups => {
                 Action::task(work::open_path(ctx.dirs.backups(), Message::Opened))
             }
+            Message::ChooseShaderFolder => Action::task(work::pick_folder(
+                "Choose a folder for shader backups",
+                Message::ShaderFolderPicked,
+            )),
+            Message::ShaderFolderPicked(None) => Action::none(),
+            Message::ShaderFolderPicked(Some(dir)) => {
+                let mut settings = ctx.settings.clone();
+                settings.shaders.backup_dir = Some(dir);
+                Action::settings(settings)
+            }
+            Message::DefaultShaderFolder => {
+                let mut settings = ctx.settings.clone();
+                settings.shaders.backup_dir = None;
+                Action::settings(settings)
+            }
             Message::Opened(Ok(())) => Action::none(),
             Message::Opened(Err(err)) => Action::toast(Toast::error(format!(
                 "Could not open the backups folder: {err}"
@@ -146,7 +164,7 @@ impl State {
             self.appearance(ctx),
             self.installs(ctx),
             self.launch(ctx),
-            self.backups(),
+            self.backups(ctx),
         ]
         .spacing(space::XL);
         page(
@@ -275,7 +293,7 @@ impl State {
         )
     }
 
-    fn backups(&self) -> Element<'_, Message> {
+    fn backups<'a>(&'a self, ctx: &'a Context) -> Element<'a, Message> {
         let keep_label = format!("{}", self.keep);
         let changed = self.keep != self.saved_keep;
         section(
@@ -300,6 +318,14 @@ impl State {
                     Some("Where snapshots are stored."),
                     false,
                     button("Open", ButtonKind::Secondary, Some(Message::OpenBackups)),
+                ),
+                setting_row(
+                    "Shader backups folder",
+                    Some(
+                        "Where Back up and clear puts shader caches. Leave empty for the default.",
+                    ),
+                    false,
+                    shader_folder_control(ctx),
                 ),
             ]),
         )
@@ -344,6 +370,30 @@ impl Default for State {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn shader_folder_control<'a>(ctx: &'a Context) -> Element<'a, Message> {
+    let mut control = iced::widget::Row::new()
+        .spacing(space::SM)
+        .align_y(Alignment::Center);
+    control = match &ctx.settings.shaders.backup_dir {
+        Some(dir) => control
+            .push(crate::widgets::muted(ctx.display_path(dir)))
+            .push(button(
+                "Use default",
+                ButtonKind::Ghost,
+                Some(Message::DefaultShaderFolder),
+            )),
+        None => control.push(crate::widgets::muted("Default")),
+    };
+    control
+        .push(crate::widgets::icon_button(
+            icons::FOLDER,
+            "Choose",
+            ButtonKind::Secondary,
+            Some(Message::ChooseShaderFolder),
+        ))
+        .into()
 }
 
 fn display_command(command: &str) -> &str {
@@ -426,6 +476,28 @@ mod tests {
         let action = state.apply(&ctx);
         assert_eq!(action.settings.unwrap().snapshot_keep, 80);
         assert_eq!(state.pending(), 0);
+    }
+
+    #[test]
+    fn picking_a_shader_backup_folder_saves_it_and_default_clears_it() {
+        let (temp, ctx) = context();
+        let mut state = State::new();
+        let dir = temp.path().join("shader-backups");
+        let action = state.update(Message::ShaderFolderPicked(Some(dir.clone())), &ctx);
+        assert_eq!(
+            action.settings.unwrap().shaders.backup_dir,
+            Some(dir.clone())
+        );
+        let mut ctx = ctx;
+        ctx.settings.shaders.backup_dir = Some(dir);
+        let action = state.update(Message::DefaultShaderFolder, &ctx);
+        assert_eq!(action.settings.unwrap().shaders.backup_dir, None);
+        assert!(
+            state
+                .update(Message::ShaderFolderPicked(None), &ctx)
+                .settings
+                .is_none()
+        );
     }
 
     #[test]
