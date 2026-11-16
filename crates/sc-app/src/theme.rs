@@ -940,6 +940,62 @@ pub fn editor(theme: &Theme, status: text_editor::Status) -> text_editor::Style 
     }
 }
 
+pub mod binds {
+    pub const MAP_LIST_WIDTH: f32 = 240.0;
+    pub const CAPTURE_HEIGHT: f32 = 72.0;
+    pub const QUICK_PICK_WIDTH: f32 = 40.0;
+    pub const EDIT_SIDE_WIDTH: f32 = 320.0;
+    pub const ACTION_PORTION: u16 = 2;
+    pub const DEVICE_PORTION: u16 = 1;
+}
+
+/// A clickable bind cell in the keybinds table.
+pub fn bind_cell(
+    selected: bool,
+    conflict: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = tokens(theme);
+        let resting = conflict.then(|| mix(p.surface_raised, p.warning, 0.12));
+        let background = match (selected, status) {
+            (true, _) => Some(mix(p.surface_raised, p.accent, 0.14)),
+            (false, button::Status::Hovered) => {
+                Some(mix(resting.unwrap_or(p.surface_raised), p.text, 0.06))
+            }
+            (false, _) => resting,
+        };
+        button::Style {
+            background: background.map(Background::from),
+            text_color: p.text,
+            border: if selected {
+                outline(p.accent, radius::SM)
+            } else {
+                border::rounded(radius::SM)
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+/// The box that listens for a key or mouse button.
+pub fn capture_box(listening: bool) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let p = tokens(theme);
+        let (background, edge) = if listening {
+            (mix(p.surface, p.accent, 0.08), p.accent)
+        } else {
+            (p.surface, p.border)
+        };
+        container::Style {
+            text_color: Some(p.text),
+            background: Some(background.into()),
+            border: outline(edge, radius::MD),
+            ..container::Style::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

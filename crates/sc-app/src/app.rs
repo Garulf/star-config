@@ -15,6 +15,7 @@ use crate::{icons, work};
 use iced::keyboard::{self, Key, key};
 use iced::widget::{Column, Space, column, container, operation, row, stack, text};
 use iced::{Alignment, Element, Length, Padding, Subscription, Task, Theme, time};
+use iced::{Event, event, mouse, window};
 use sc_core::backup::{Scope, SnapshotId};
 use sc_core::install::{Channel, Install};
 use sc_core::launcher::{self, LaunchMethod};
@@ -98,6 +99,8 @@ pub enum Message {
     Apply,
     Discard,
     Shortcut(Shortcut),
+    /// A raw key or mouse event for the active screen while it captures input.
+    Input(Event),
     Overview(overview::Message),
     Config(config::Message),
     Keybinds(keybinds::Message),
@@ -559,6 +562,10 @@ impl App {
                 Task::none()
             }
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
+            Message::Input(event) => match self.screen {
+                Screen::Keybinds => self.update(Message::Keybinds(keybinds::Message::Input(event))),
+                _ => Task::none(),
+            },
             Message::Overview(m) => {
                 let a = self.screens.overview.update(m, &self.ctx);
                 self.handle(a.map(Message::Overview))
@@ -716,10 +723,29 @@ impl App {
         )
     }
 
+    /// Whether the active screen is capturing keys and mouse buttons, which also turns the
+    /// shell's own shortcuts off.
+    pub fn wants_input(&self) -> bool {
+        self.dialog.is_none()
+            && match self.screen {
+                Screen::Keybinds => self.screens.keybinds.wants_input(),
+                _ => false,
+            }
+    }
+
+    /// Where the event subscription sends keyboard and mouse events right now.
+    pub fn event_handler(&self) -> fn(Event, event::Status, window::Id) -> Option<Message> {
+        if self.wants_input() {
+            captured_input
+        } else {
+            shortcut_event
+        }
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![
             time::every(PROBE_EVERY).map(|_| Message::ProbeTick),
-            keyboard::listen().filter_map(shortcut_message),
+            event::listen_with(self.event_handler()),
         ];
         if self.toasts.iter().any(Toast::expires) {
             subscriptions.push(time::every(TOAST_SWEEP).map(|_| Message::SweepToasts));
@@ -1020,6 +1046,24 @@ fn detect_launch(ctx: &Context) -> Option<LaunchMethod> {
 
 fn shortcut_message(event: keyboard::Event) -> Option<Message> {
     shortcut(&event).map(Message::Shortcut)
+}
+
+fn shortcut_event(event: Event, status: event::Status, _window: window::Id) -> Option<Message> {
+    match event {
+        Event::Keyboard(key_event) if status == event::Status::Ignored => {
+            shortcut_message(key_event)
+        }
+        _ => None,
+    }
+}
+
+fn captured_input(event: Event, status: event::Status, _window: window::Id) -> Option<Message> {
+    let wanted = match &event {
+        Event::Keyboard(_) => status == event::Status::Ignored,
+        Event::Mouse(mouse::Event::ButtonPressed(_) | mouse::Event::WheelScrolled { .. }) => true,
+        _ => false,
+    };
+    wanted.then_some(Message::Input(event))
 }
 
 fn digit_of(key: &Key, physical: &key::Physical) -> Option<usize> {
