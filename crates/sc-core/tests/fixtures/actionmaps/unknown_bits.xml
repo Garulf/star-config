@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ActionMaps>
+ <ActionProfiles version="1" optionsVersion="2" rebindVersion="2" profileName="default">
+  <options type="joystick" instance="1" Product="Some Stick {GUID}"/>
+  <options type="joystick" instance="2" Product="Other Stick {GUID}"/>
+  <futureThing mode="x">
+   <child value="1"/>
+  </futureThing>
+  <actionmap name="spaceship_movement">
+   <action name="v_afterburner" activationMode="hold">
+    <!-- tuned for the stick -->
+    <rebind input="js1_button3" curve="soft"/>
+    <rebind input="kb1_f"/>
+   </action>
+  </actionmap>
+  <actionmap name="spaceship_weapons">
+   <action name="v_attack1">
+    <rebind input="js2_button1"/>
+   </action>
+  </actionmap>
+ </ActionProfiles>
+</ActionMaps>

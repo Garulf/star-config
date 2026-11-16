@@ -1,0 +1,7 @@
+<ActionMap>
+ <actionmap name="spaceship_movement">
+  <action name="v_afterburner">
+   <rebind input="js1_button3"/>
+  </action>
+ </actionmap>
+</ActionMap>

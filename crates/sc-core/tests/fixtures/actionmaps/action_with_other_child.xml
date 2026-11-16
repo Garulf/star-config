@@ -1,0 +1,10 @@
+<ActionMaps>
+ <ActionProfiles version="1" profileName="default">
+  <actionmap name="spaceship_movement">
+   <action name="v_afterburner">
+    <rebind input="js1_button3"/>
+    <addbind input="js1_button4"/>
+   </action>
+  </actionmap>
+ </ActionProfiles>
+</ActionMaps>

@@ -1,0 +1,21 @@
+<ActionMaps version="1" optionsVersion="2" rebindVersion="2" profileName="mylayout">
+	<CustomisationUIHeader label="mylayout" description="" image="">
+		<devices>
+			<keyboard instance="1"/>
+			<joystick instance="1"/>
+		</devices>
+	</CustomisationUIHeader>
+	<options type="keyboard" instance="1" Product="Keyboard  {6F1D2B61-D5A0-11CF-BFC7-444553540000}"/>
+	<options type="joystick" instance="1" Product="VKB Gladiator {0200231D-0000-0000-0000-504944564944}"/>
+	<modifiers />
+	<actionmap name="spaceship_movement">
+		<action name="v_afterburner">
+			<rebind input="js1_button3"/>
+		</action>
+	</actionmap>
+	<actionmap name="spaceship_weapons">
+		<action name="v_attack1_group1">
+			<rebind input="js1_button1"/>
+		</action>
+	</actionmap>
+</ActionMaps>
