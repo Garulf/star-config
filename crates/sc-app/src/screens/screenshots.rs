@@ -916,7 +916,7 @@ fn index_path(ctx: &Context) -> PathBuf {
     ctx.dirs.data.join(INDEX_FILE)
 }
 
-fn make_thumbs(paths: Vec<PathBuf>, cache: &Path) -> Vec<(PathBuf, Option<Handle>)> {
+pub(crate) fn make_thumbs(paths: Vec<PathBuf>, cache: &Path) -> Vec<(PathBuf, Option<Handle>)> {
     paths
         .into_iter()
         .map(|path| {

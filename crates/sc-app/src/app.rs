@@ -20,8 +20,10 @@ use sc_core::backup::{Scope, SnapshotId};
 use sc_core::install::{Channel, Install};
 use sc_core::launcher::{self, LaunchMethod};
 use sc_core::process::RunState;
+use sc_core::starstrings::Http;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const PROBE_EVERY: Duration = Duration::from_secs(3);
@@ -192,6 +194,13 @@ impl App {
         }
     }
 
+    /// [`App::with`] with the StarStrings screen asking `http` instead of GitHub.
+    pub fn with_http(ctx: Context, http: Arc<dyn Http>) -> Self {
+        let mut app = Self::with(ctx);
+        app.screens.starstrings = starstrings::State::with_http(http);
+        app
+    }
+
     /// [`App::with`] plus the first reload of every screen.
     pub fn boot(ctx: Context) -> (Self, Task<Message>) {
         let mut app = Self::with(ctx);
@@ -294,6 +303,9 @@ impl App {
         }
         if action.rescan {
             tasks.push(self.rescan());
+        }
+        if let Some(screen) = action.goto {
+            tasks.push(self.update(Message::Navigate(screen)));
         }
         Task::batch(tasks)
     }
@@ -611,6 +623,8 @@ impl App {
             }
             Message::StarStrings(m) => {
                 let a = self.screens.starstrings.update(m, &self.ctx);
+                let release = self.screens.starstrings.release().cloned();
+                self.screens.overview.set_release(release);
                 self.handle(a.map(Message::StarStrings))
             }
             Message::Screenshots(m) => {

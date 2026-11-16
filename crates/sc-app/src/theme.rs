@@ -80,6 +80,10 @@ pub mod layout {
     pub const SHOT_PERIOD_WIDTH: f32 = 150.0;
     pub const SHOT_INFO_WIDTH: f32 = 320.0;
     pub const SHOT_DETAIL_LABEL_WIDTH: f32 = 84.0;
+    /// Overview cards: three across at the default window, two at the minimum.
+    pub const OVERVIEW_CARD_MAX_WIDTH: f32 = 400.0;
+    pub const OVERVIEW_CARD_HEIGHT: f32 = 208.0;
+    pub const OVERVIEW_THUMB_HEIGHT: f32 = 36.0;
 }
 
 const BORDER_WIDTH: f32 = 1.0;
@@ -242,6 +246,15 @@ pub fn card(theme: &Theme) -> container::Style {
         background: Some(p.surface_raised.into()),
         border: outline(p.border, radius::MD),
         ..container::Style::default()
+    }
+}
+
+/// A card that needs the user's attention: the card with a warning-tinted border.
+pub fn card_attention(theme: &Theme) -> container::Style {
+    let p = tokens(theme);
+    container::Style {
+        border: outline(mix(p.border, p.warning, 0.6), radius::MD),
+        ..card(theme)
     }
 }
 

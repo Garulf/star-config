@@ -102,7 +102,7 @@ pub struct State {
 
 impl State {
     pub fn new() -> Self {
-        Self::with_local_appdata(std::env::var_os("LOCALAPPDATA").map(PathBuf::from))
+        Self::with_local_appdata(local_appdata())
     }
 
     /// Where a native Windows install keeps its caches. Wine prefixes carry their own.
@@ -542,11 +542,20 @@ fn store_root(ctx: &Context) -> PathBuf {
         .unwrap_or_else(|| ctx.dirs.shader_backups())
 }
 
+/// Where a native install keeps its shader caches.
+pub(crate) fn local_appdata() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+}
+
+/// Every shader cache of `install`, as this screen lists them.
+pub(crate) fn caches(install: &Install, local: Option<&Path>) -> Vec<Cache> {
+    shaders::discover(install, &shaders::appdata_roots(install, local))
+}
+
 fn inventory(install: &Install, local: Option<&Path>, store: PathBuf) -> Inventory {
-    let roots = shaders::appdata_roots(install, local);
     Inventory {
         install: install.root.clone(),
-        caches: shaders::discover(install, &roots),
+        caches: caches(install, local),
         backups: ShaderBackups::new(store).list(),
     }
 }

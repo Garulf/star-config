@@ -28,6 +28,19 @@ pub fn bytes(count: u64) -> String {
     }
 }
 
+/// Groups digits in threes: `1204` becomes `1,204`.
+pub fn thousands(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 /// The UTC calendar date of a Unix time, as `12 Nov 2026`.
 pub fn date_of_unix(seconds: i64) -> String {
     let (year, month, day) = civil_from_days(seconds.div_euclid(SECONDS_PER_DAY));

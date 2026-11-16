@@ -521,3 +521,402 @@ pub fn space_scene(path: &Path, width: u32, height: u32, seed: u64) {
     }
     canvas.save(path, &mut rng);
 }
+
+// The demo story ----------------------------------------------------------------
+//
+// One player's install, told the same way on every screen: LIVE on 4.3.2, PTU on 4.4.0,
+// StarStrings installed before the last patch, a few weeks of snapshots and captures.
+
+pub const LIVE_VERSION: &str = "4.3.2";
+pub const LIVE_CHANGE: &str = "9876543";
+pub const PTU_VERSION: &str = "4.4.0-PTU";
+pub const PTU_CHANGE: &str = "9912345";
+/// The LIVE build StarStrings was installed on, before the game updated.
+pub const EARLIER_LIVE_CHANGE: &str = "9812345";
+pub const DEMO_ACTIONMAPS: &str = include_str!("../tests/fixtures/keybinds/actionmaps.xml");
+pub const DEMO_RELEASE: &str = "SC LIVE Build (release-2026-10-28-91d0a4e)";
+pub const DEMO_RELEASE_DATE: &str = "2026-10-28T17:31:51Z";
+pub const SHADER_CURRENT: &str = "sc-alpha-4.3.2";
+pub const SHADER_OLDER: &str = "sc-alpha-4.2.1";
+const KB: u64 = 1024;
+const MB: u64 = 1024 * KB;
+const GB: u64 = 1024 * MB;
+
+pub fn idle_probe() -> std::sync::Arc<sc_core::process::FixedProbe> {
+    std::sync::Arc::new(sc_core::process::FixedProbe {
+        game: sc_core::process::RunState::NotRunning,
+        launcher: sc_core::process::RunState::NotRunning,
+    })
+}
+
+pub fn channel_named(ctx: &Context, name: &str) -> sc_core::install::Channel {
+    ctx.channels
+        .iter()
+        .find(|c| c.name == name)
+        .unwrap()
+        .clone()
+}
+
+/// Writes the channel's `build_manifest.id`.
+pub fn write_build(channel: &sc_core::install::Channel, version: &str, change: &str) {
+    fs::write(
+        channel.dir.join("build_manifest.id"),
+        format!(r#"{{"Data":{{"Version":"{version}","RequestedP4ChangeNum":"{change}"}}}}"#),
+    )
+    .unwrap();
+}
+
+/// A file of `len` bytes that takes no space.
+pub fn sparse(path: &Path, len: u64) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::File::create(path).unwrap().set_len(len).unwrap();
+}
+
+/// The demo prefix with LIVE and PTU, a launcher, an idle game and both builds, but no
+/// player files yet.
+pub fn demo_base(temp: &Path) -> Context {
+    let mut ctx = context_with_wine_script(temp).with_probe(idle_probe());
+    ctx.settings.screenshots.archive_dir = Some(home(temp).join("Pictures/Star Citizen"));
+    write_build(&channel_named(&ctx, "LIVE"), LIVE_VERSION, LIVE_CHANGE);
+    write_build(&channel_named(&ctx, "PTU"), PTU_VERSION, PTU_CHANGE);
+    ctx
+}
+
+/// The player's own files in LIVE: user.cfg, attributes.xml and keybinds.
+pub fn demo_player_files(ctx: &Context) {
+    let live = channel_named(ctx, "LIVE");
+    write_channel_files(
+        &live,
+        Some(DEMO_USER_CFG.as_bytes()),
+        Some(demo_attributes().as_bytes()),
+    );
+    let maps = live.actionmaps_xml();
+    fs::create_dir_all(maps.parent().unwrap()).unwrap();
+    fs::write(maps, DEMO_ACTIONMAPS).unwrap();
+}
+
+/// Everything at once: the whole story, ready for any screen.
+pub fn demo_story(temp: &Path) -> Context {
+    let ctx = demo_base(temp);
+    demo_player_files(&ctx);
+    install_starstrings(&ctx, EARLIER_LIVE_CHANGE);
+    demo_backups(&ctx);
+    demo_shaders(temp);
+    demo_screenshots(&ctx);
+    ctx
+}
+
+// StarStrings --------------------------------------------------------------------
+
+struct ServedZip(Vec<u8>);
+
+impl sc_core::starstrings::Http for ServedZip {
+    fn get_text(&self, _url: &str) -> sc_core::error::Result<Option<String>> {
+        Ok(None)
+    }
+
+    fn get_bytes(&self, _url: &str, _max_bytes: u64) -> sc_core::error::Result<Vec<u8>> {
+        Ok(self.0.clone())
+    }
+}
+
+pub fn demo_release() -> sc_core::starstrings::Release {
+    sc_core::starstrings::Release {
+        name: DEMO_RELEASE.into(),
+        published_at: DEMO_RELEASE_DATE.into(),
+        asset_url:
+            "https://github.com/MrKraken/StarStrings/releases/download/latest/StarStrings-LIVE.zip"
+                .into(),
+        asset_size: 2_516_582,
+        sha256: None,
+    }
+}
+
+/// Installs the demo StarStrings release into LIVE while LIVE reports build `change`,
+/// then puts the current build back.
+pub fn install_starstrings(ctx: &Context, change: &str) {
+    let live = channel_named(ctx, "LIVE");
+    write_build(&live, LIVE_VERSION, change);
+    let mut ini = b"\xef\xbb\xbf".to_vec();
+    for i in 0..200 {
+        ini.extend(format!("item_Name{i:06}=S3 Bulwark Shield {i}\n").bytes());
+    }
+    let zip = stored_zip(&[("Data/Localization/english/global.ini", &ini)]);
+    let writer = sc_core::guard::Writer::new(
+        sc_core::backup::BackupStore::new(ctx.dirs.backups()),
+        idle_probe(),
+        false,
+    );
+    let scope = sc_core::backup::Scope {
+        install_key: ctx.install.as_ref().unwrap().key(),
+        channel: live.name.clone(),
+    };
+    let info = sc_core::starstrings::install(
+        &ServedZip(zip),
+        &demo_release(),
+        &writer,
+        &scope,
+        &live,
+        &ctx.dirs,
+        1,
+    )
+    .unwrap();
+    write_build(&live, LIVE_VERSION, LIVE_CHANGE);
+    let installed = local_unix(9, 22, 9);
+    set_snapshot_time(ctx, &info, installed);
+    let record = ctx
+        .dirs
+        .data
+        .join("starstrings")
+        .join(format!("{}-{}.toml", scope.install_key, scope.channel));
+    rewrite_line(&record, "installed_unix = ", &installed.to_string());
+}
+
+/// Replaces the value of the line starting with `prefix` in a small text file.
+fn rewrite_line(path: &Path, prefix: &str, value: &str) {
+    let text = fs::read_to_string(path).unwrap();
+    let rewritten: Vec<String> = text
+        .lines()
+        .map(|line| {
+            if line.starts_with(prefix) {
+                format!("{prefix}{value}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    fs::write(path, rewritten.join("\n") + "\n").unwrap();
+}
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &byte in data {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// A zip with uncompressed entries, enough for the core's reader.
+pub fn stored_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (name, data) in entries {
+        let offset = out.len() as u32;
+        let crc = crc32(data);
+        let header = |sig: u32, central_entry: bool| {
+            let mut h = Vec::new();
+            h.extend(sig.to_le_bytes());
+            if central_entry {
+                h.extend(20u16.to_le_bytes());
+            }
+            for value in [20u16, 0, 0, 0, 0x21] {
+                h.extend(value.to_le_bytes());
+            }
+            h.extend(crc.to_le_bytes());
+            h.extend((data.len() as u32).to_le_bytes());
+            h.extend((data.len() as u32).to_le_bytes());
+            h.extend((name.len() as u16).to_le_bytes());
+            h.extend(0u16.to_le_bytes());
+            if central_entry {
+                for value in [0u16, 0, 0] {
+                    h.extend(value.to_le_bytes());
+                }
+                h.extend(0u32.to_le_bytes());
+                h.extend(offset.to_le_bytes());
+            }
+            h.extend(name.as_bytes());
+            h
+        };
+        out.extend(header(0x0403_4b50, false));
+        out.extend(*data);
+        central.extend(header(0x0201_4b50, true));
+    }
+    let central_offset = out.len() as u32;
+    let central_size = central.len() as u32;
+    out.extend(central);
+    out.extend(0x0605_4b50u32.to_le_bytes());
+    for value in [0u16, 0, entries.len() as u16, entries.len() as u16] {
+        out.extend(value.to_le_bytes());
+    }
+    out.extend(central_size.to_le_bytes());
+    out.extend(central_offset.to_le_bytes());
+    out.extend(0u16.to_le_bytes());
+    out
+}
+
+// Backups ------------------------------------------------------------------------
+
+/// Moves a snapshot's time to `unix` by rewriting its manifest.
+pub fn set_snapshot_time(ctx: &Context, info: &sc_core::backup::SnapshotInfo, unix: i64) {
+    let scope = ctx.scope().unwrap();
+    let manifest = ctx
+        .dirs
+        .backups()
+        .join(&scope.install_key)
+        .join(&scope.channel)
+        .join(&info.id.0)
+        .join("manifest.toml");
+    rewrite_line(&manifest, "created_unix = ", &unix.to_string());
+}
+
+/// Snapshots over the last two weeks of LIVE, the newest one at 21:02 today when that has
+/// passed, else an hour ago.
+pub fn demo_backups(ctx: &Context) {
+    let live = channel_named(ctx, "LIVE");
+    let scope = ctx.scope().unwrap();
+    let store = sc_core::backup::BackupStore::new(ctx.dirs.backups());
+    let now = chrono::Local::now();
+    let today_at = now
+        .date_naive()
+        .and_hms_opt(21, 2, 0)
+        .and_then(|at| at.and_local_timezone(chrono::Local).single())
+        .filter(|at| *at < now)
+        .unwrap_or(now - chrono::Duration::hours(1))
+        .timestamp();
+    let day = 86_400;
+    let snapshots: [(Vec<PathBuf>, &str, i64); 5] = [
+        (live.managed_files(), "Manual snapshot", today_at - 13 * day),
+        (
+            vec![live.attributes_xml()],
+            "Head tracking and comms changes",
+            today_at - 6 * day - 4_000,
+        ),
+        (
+            vec![live.actionmaps_xml()],
+            "Keybinds changes",
+            today_at - day - 2_000,
+        ),
+        (
+            vec![live.user_cfg(), live.attributes_xml()],
+            "Config changes",
+            today_at - 3 * 3_600,
+        ),
+        (vec![live.user_cfg()], "Config changes", today_at),
+    ];
+    for (files, label, unix) in snapshots {
+        let info = store.snapshot(&scope, &live, &files, label).unwrap();
+        set_snapshot_time(ctx, &info, unix);
+    }
+}
+
+// Shader caches ------------------------------------------------------------------
+
+pub fn shader_cache_dir(temp: &Path) -> PathBuf {
+    prefix(temp).join("drive_c/users/steamuser/AppData/Local/Star Citizen")
+}
+
+fn age(dir: &Path, days: u64) {
+    let when = std::time::SystemTime::now() - std::time::Duration::from_secs(days * 86_400);
+    fs::File::open(dir).unwrap().set_modified(when).unwrap();
+}
+
+/// Caches for the current build and an older one, as sparse files.
+pub fn demo_shaders(temp: &Path) {
+    let sc = shader_cache_dir(temp);
+    sparse(
+        &sc.join(SHADER_CURRENT).join("shaders/cache-0.bin"),
+        1_650 * MB,
+    );
+    sparse(
+        &sc.join(SHADER_CURRENT)
+            .join("vulkanshadercache/pipeline.bin"),
+        412 * MB,
+    );
+    sparse(
+        &sc.join(SHADER_OLDER).join("shaders/cache-0.bin"),
+        GB + 420 * MB,
+    );
+    sparse(
+        &sc.join(SHADER_OLDER).join("vulkanshadercache/pipeline.bin"),
+        380 * MB,
+    );
+    for (version, kind, days) in [
+        (SHADER_CURRENT, "shaders", 2),
+        (SHADER_CURRENT, "vulkanshadercache", 2),
+        (SHADER_OLDER, "shaders", 38),
+        (SHADER_OLDER, "vulkanshadercache", 41),
+    ] {
+        age(&sc.join(version).join(kind), days);
+    }
+}
+
+// Screenshots --------------------------------------------------------------------
+
+/// Where `days_ago` at `hour:minute` local time falls, as Unix seconds.
+pub fn local_unix(days_ago: i64, hour: u32, minute: u32) -> i64 {
+    let date = chrono::Local::now().date_naive() - chrono::Duration::days(days_ago);
+    date.and_hms_opt(hour, minute, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .earliest()
+        .unwrap()
+        .timestamp()
+}
+
+fn set_file_time(path: &Path, unix: i64) {
+    let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix as u64);
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+}
+
+/// (channel or "Archive", days ago, hour, minute) for each demo capture, newest first.
+pub const DEMO_SHOTS: [(&str, i64, u32, u32); 14] = [
+    ("LIVE", 0, 21, 14),
+    ("LIVE", 0, 20, 58),
+    ("PTU", 0, 20, 31),
+    ("LIVE", 0, 20, 12),
+    ("LIVE", 0, 19, 47),
+    ("PTU", 0, 19, 3),
+    ("LIVE", 1, 23, 10),
+    ("LIVE", 1, 22, 47),
+    ("Archive", 1, 22, 45),
+    ("PTU", 1, 22, 31),
+    ("LIVE", 1, 19, 2),
+    ("Archive", 1, 18, 58),
+    ("LIVE", 1, 18, 40),
+    ("LIVE", 1, 18, 12),
+];
+
+/// Fourteen captures over two days in LIVE, PTU and the archive. Captures dated later
+/// than now are moved back a day so the story never shows the future.
+pub fn demo_screenshots(ctx: &Context) -> Vec<PathBuf> {
+    let archive = ctx.settings.screenshots.archive_dir.clone().unwrap();
+    let now = chrono::Local::now().timestamp();
+    DEMO_SHOTS
+        .iter()
+        .enumerate()
+        .map(|(index, (place, days_ago, hour, minute))| {
+            let dir = match *place {
+                "Archive" => archive.clone(),
+                name => channel_named(ctx, name).screenshots_dir(),
+            };
+            let mut unix = local_unix(*days_ago, *hour, *minute);
+            if unix > now {
+                unix -= 2 * 86_400;
+            }
+            let stamp = chrono::DateTime::from_timestamp(unix, 0)
+                .unwrap()
+                .with_timezone(&chrono::Local);
+            let path = dir.join(format!(
+                "ScreenShot-{}.jpg",
+                stamp.format("%Y-%m-%d_%H-%M-%S")
+            ));
+            let (width, height) = if index == 0 {
+                (1920, 1080)
+            } else {
+                (1280, 720)
+            };
+            space_scene(&path, width, height, 11 + index as u64);
+            set_file_time(&path, unix);
+            path
+        })
+        .collect()
+}

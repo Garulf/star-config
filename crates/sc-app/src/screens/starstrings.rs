@@ -290,7 +290,8 @@ impl State {
         )
     }
 
-    fn release(&self) -> Option<&Release> {
+    /// The latest release, once a check has found one.
+    pub fn release(&self) -> Option<&Release> {
         self.latest.as_ref().and_then(Option::as_ref)
     }
 

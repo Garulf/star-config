@@ -211,6 +211,8 @@ pub struct Action<M> {
     /// true = root rediscovers installs and channels.
     pub rescan: bool,
     pub confirm: Option<Confirm<M>>,
+    /// Some = root switches to that screen.
+    pub goto: Option<Screen>,
 }
 
 impl<M> Action<M> {
@@ -221,6 +223,14 @@ impl<M> Action<M> {
             settings: None,
             rescan: false,
             confirm: None,
+            goto: None,
+        }
+    }
+
+    pub fn goto(screen: Screen) -> Self {
+        Self {
+            goto: Some(screen),
+            ..Self::none()
         }
     }
 
@@ -290,6 +300,7 @@ impl<M> Action<M> {
             settings: self.settings,
             rescan: self.rescan,
             confirm: self.confirm.map(|confirm| confirm.map(f)),
+            goto: self.goto,
         }
     }
 }
