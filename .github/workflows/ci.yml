@@ -30,3 +30,17 @@ jobs:
             target/release/star-config
             target/release/star-config.exe
           if-no-files-found: error
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: nix build --print-build-logs
+      - name: Check that the libraries loaded at run time are on the rpath
+        run: |
+          rpath=$(readelf -d result/bin/.star-config-wrapped | grep -i runpath)
+          for lib in vulkan-loader wayland libxkbcommon libx11; do
+            grep -qi -- "-$lib-" <<<"$rpath" || { echo "missing $lib in rpath"; exit 1; }
+          done
+      - run: nix flake check
