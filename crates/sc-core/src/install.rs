@@ -289,6 +289,39 @@ impl Channel {
         self.path("ScreenShots")
     }
 
+    pub fn managed_files(&self) -> Vec<PathBuf> {
+        let mut files = vec![
+            self.user_cfg(),
+            self.attributes_xml(),
+            self.actionmaps_xml(),
+        ];
+        files.extend(self.mapping_files());
+        files.push(self.global_ini());
+        files
+    }
+
+    fn mapping_files(&self) -> Vec<PathBuf> {
+        let dir = self.mappings_dir();
+        let is_real_dir = fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir());
+        if !is_real_dir {
+            return Vec::new();
+        }
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        let mut found: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"))
+            })
+            .collect();
+        found.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
+        found
+    }
+
     pub fn build_id(&self) -> Option<String> {
         let text = fs::read_to_string(resolve_ci(&self.dir, "build_manifest.id")?).ok()?;
         let manifest: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -652,5 +685,72 @@ mod tests {
             },
         };
         assert_eq!(wine.label(), Path::new("/opt/pfx").display().to_string());
+    }
+
+    #[test]
+    fn managed_files_lists_the_five_kinds_in_order_and_only_xml_mappings() {
+        let dir = tempdir().unwrap();
+        let channel = Channel {
+            name: "LIVE".into(),
+            dir: dir.path().to_path_buf(),
+        };
+        let mappings = channel.mappings_dir();
+        touch(&mappings.join("b.XML"));
+        touch(&mappings.join("a.xml"));
+        touch(&mappings.join("notes.txt"));
+        mkdir(&mappings.join("sub.xml"));
+        assert_eq!(
+            channel.managed_files(),
+            vec![
+                channel.user_cfg(),
+                channel.attributes_xml(),
+                channel.actionmaps_xml(),
+                mappings.join("a.xml"),
+                mappings.join("b.XML"),
+                channel.global_ini(),
+            ]
+        );
+    }
+
+    #[test]
+    fn managed_files_without_mappings_lists_the_fixed_paths() {
+        let dir = tempdir().unwrap();
+        let channel = Channel {
+            name: "LIVE".into(),
+            dir: dir.path().to_path_buf(),
+        };
+        assert_eq!(
+            channel.managed_files(),
+            vec![
+                channel.user_cfg(),
+                channel.attributes_xml(),
+                channel.actionmaps_xml(),
+                channel.global_ini(),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_files_ignores_symlinked_mappings_dir() {
+        let dir = tempdir().unwrap();
+        let channel = Channel {
+            name: "LIVE".into(),
+            dir: dir.path().join("LIVE"),
+        };
+        let elsewhere = dir.path().join("elsewhere");
+        touch(&elsewhere.join("x.xml"));
+        let mappings = channel.mappings_dir();
+        mkdir(mappings.parent().unwrap());
+        std::os::unix::fs::symlink(&elsewhere, &mappings).unwrap();
+        assert_eq!(
+            channel.managed_files(),
+            vec![
+                channel.user_cfg(),
+                channel.attributes_xml(),
+                channel.actionmaps_xml(),
+                channel.global_ini(),
+            ]
+        );
     }
 }
