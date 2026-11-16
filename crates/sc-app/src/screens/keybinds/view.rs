@@ -13,16 +13,17 @@ use crate::theme::{self, ButtonKind, FONT_MONO, FONT_SEMIBOLD, Tone, binds, layo
 use crate::widgets::{
     banner, button, change_marker, divider, empty_state, heading, hint, icon_only, icon_toned,
     key_cap, label, muted, page_fixed, pick_list, search_field, table_header, tag, text_field,
-    virtual_list,
+    virtual_list, virtual_list_with_id,
 };
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
-    self, Column, Row, Space, column, container, mouse_area, row, scrollable, text,
+    self, Column, Id, Row, Space, column, container, mouse_area, row, scrollable, sensor, text,
 };
 use iced::{Alignment, Element, Length, Padding};
 use sc_core::actionmaps::{DeviceKind, Slot, layout_file_name};
 
-const ROW_HEIGHT: f32 = layout::ROW_MIN_HEIGHT;
+pub(super) const ROW_HEIGHT: f32 = layout::ROW_MIN_HEIGHT;
+pub(super) const TABLE_ID: &str = "keybinds-table";
 const CELL_GAP: f32 = space::XS;
 const TIGHT: f32 = space::XS / 2.0;
 const CELL_PADDING: Padding = Padding {
@@ -216,7 +217,8 @@ impl State {
         let table: Element<'a, Message> = if self.lines.is_empty() {
             container(hint(NO_MATCH)).center(Length::Fill).into()
         } else {
-            virtual_list(
+            virtual_list_with_id(
+                Id::new(TABLE_ID),
                 &self.list,
                 self.lines.len(),
                 ROW_HEIGHT,
@@ -226,7 +228,9 @@ impl State {
         };
         column![
             header_row(model),
-            container(table).height(Length::Fill),
+            sensor(container(table).height(Length::Fill))
+                .on_show(|size| Message::TableResized(size.height))
+                .on_resize(|size| Message::TableResized(size.height)),
             divider(),
             container(self.panel_view(model))
                 .padding(space::LG)

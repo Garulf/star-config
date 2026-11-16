@@ -35,4 +35,4 @@ pub use section::{divider, rows, section};
 pub use setting_row::{field_row, setting_row};
 pub use toast::{MAX_TOASTS, toast_stack};
 pub use typography::{display, heading, hint, label, muted, strong, title};
-pub use virtual_list::{VirtualListState, virtual_list};
+pub use virtual_list::{VirtualListState, virtual_list, virtual_list_with_id};

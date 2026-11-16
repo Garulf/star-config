@@ -1,6 +1,6 @@
 use crate::theme::{self, layout, space};
 use iced::widget::scrollable::{Direction, Scrollbar};
-use iced::widget::{Column, Space, container, responsive, scrollable};
+use iced::widget::{Column, Id, Space, container, responsive, scrollable};
 use iced::{Element, Length};
 use std::ops::Range;
 use std::rc::Rc;
@@ -40,6 +40,30 @@ pub fn virtual_list<'a, M: 'a>(
     on_scroll: impl Fn(f32) -> M + 'a,
     row: impl Fn(usize) -> Element<'a, M> + 'a,
 ) -> Element<'a, M> {
+    build(None, state, count, row_height, on_scroll, row)
+}
+
+/// [`virtual_list`] with a scrollable `id`, so a screen can move it with
+/// `operation::scroll_to`.
+pub fn virtual_list_with_id<'a, M: 'a>(
+    id: Id,
+    state: &'a VirtualListState,
+    count: usize,
+    row_height: f32,
+    on_scroll: impl Fn(f32) -> M + 'a,
+    row: impl Fn(usize) -> Element<'a, M> + 'a,
+) -> Element<'a, M> {
+    build(Some(id), state, count, row_height, on_scroll, row)
+}
+
+fn build<'a, M: 'a>(
+    id: Option<Id>,
+    state: &'a VirtualListState,
+    count: usize,
+    row_height: f32,
+    on_scroll: impl Fn(f32) -> M + 'a,
+    row: impl Fn(usize) -> Element<'a, M> + 'a,
+) -> Element<'a, M> {
     let on_scroll = Rc::new(on_scroll);
     let offset = state.offset;
     let fallback = if state.viewport_height > 0.0 {
@@ -68,17 +92,20 @@ pub fn virtual_list<'a, M: 'a>(
         }
         content = content.push(Space::new().height(below));
         let report = on_scroll.clone();
-        scrollable(content)
-            .direction(Direction::Vertical(
-                Scrollbar::new()
-                    .width(theme::SCROLLBAR_WIDTH)
-                    .scroller_width(theme::SCROLLBAR_WIDTH)
-                    .margin(space::XS / 2.0),
-            ))
-            .style(theme::scroll)
-            .on_scroll(move |viewport| report(viewport.absolute_offset().y))
-            .height(Length::Fill)
-            .into()
+        let list = match id.clone() {
+            Some(id) => scrollable(content).id(id),
+            None => scrollable(content),
+        };
+        list.direction(Direction::Vertical(
+            Scrollbar::new()
+                .width(theme::SCROLLBAR_WIDTH)
+                .scroller_width(theme::SCROLLBAR_WIDTH)
+                .margin(space::XS / 2.0),
+        ))
+        .style(theme::scroll)
+        .on_scroll(move |viewport| report(viewport.absolute_offset().y))
+        .height(Length::Fill)
+        .into()
     })
     .into()
 }

@@ -762,3 +762,19 @@ fn keybinds_pictures() {
     assert!(has(&app, "Buttons"));
     testkit::snapshot(&mut sim(&app), &dark, "keybinds-joystick-dark");
 }
+
+#[test]
+fn selected_row_scrolls_into_view_above_the_edit_panel() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    assert!(!has(&app, "v_weapon_toggle_gimbal_mode"));
+    select(
+        &mut app,
+        "spaceship_weapons",
+        "v_master_mode_cycle",
+        DeviceKind::Mouse,
+        1,
+    );
+    send(&mut app, keybinds::Message::TableResized(240.0));
+    assert!(has(&app, "v_weapon_toggle_gimbal_mode"));
+}

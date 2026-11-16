@@ -8,16 +8,17 @@ use crate::screen::{Action, Confirm, Screen, Toast, ToastKind};
 use crate::theme::{self, ButtonKind, FONT_MONO, FONT_SEMIBOLD, Tone, layout, size, space};
 use crate::widgets::{
     VirtualListState, banner, button, cell, empty_state, heading, hint, icon_button, page_fixed,
-    split, strong, table_header, table_row, tag, virtual_list,
+    split, strong, table_header, table_row, tag, virtual_list, virtual_list_with_id,
 };
 use crate::{icons, work};
 use chrono::NaiveDateTime;
-use iced::widget::{column, container, row, text};
+use iced::widget::{Id, column, container, operation, row, scrollable, text};
 use iced::{Alignment, Element, Length, Padding, Task};
 use sc_core::backup::{Scope, SnapshotId, SnapshotInfo, SnapshotState};
 use sc_core::diff::DiffLine;
 
 pub const CAPTION: &str = "star-config takes a snapshot of your files before every change it makes. Restore one to go back.";
+const DIFF_ID: &str = "backups-diff";
 pub const DIFF_CAPTION: &str =
     "Red lines are in your file now. Green lines come back if you restore.";
 pub const NOT_TEXT: &str = "This file is too large or not text, so only its status is shown.";
@@ -137,6 +138,7 @@ impl State {
                         Ok(view) => Diff::Ready(view),
                         Err(err) => Diff::Failed(err),
                     });
+                    return Action::task(self.sync_diff_scroll());
                 }
                 Action::none()
             }
@@ -271,6 +273,17 @@ impl State {
                 Action::none()
             }
         }
+    }
+
+    /// Moves the diff to the offset the state holds; the scrollable keeps its own otherwise.
+    fn sync_diff_scroll(&self) -> Task<Message> {
+        operation::scroll_to(
+            DIFF_ID,
+            scrollable::AbsoluteOffset {
+                x: 0.0,
+                y: self.diff_list.offset,
+            },
+        )
     }
 
     fn open(&mut self, rel: String, ctx: &Context) -> Action<Message> {
@@ -445,9 +458,9 @@ impl State {
             first = first.push(tag("Interrupted", Tone::Danger));
         }
         let second = row![
-            hint(when::label(&info.label, now))
+            container(hint(when::label(&info.label, now)).wrapping(text::Wrapping::None))
                 .width(Length::Fill)
-                .wrapping(text::Wrapping::None),
+                .clip(true),
             hint(when::files(info.files.len())),
         ]
         .spacing(space::SM);
@@ -550,7 +563,8 @@ impl State {
             Some(Diff::Ready(DiffView::Lines(lines))) if lines.is_empty() => {
                 centered(hint(NO_CHANGE))
             }
-            Some(Diff::Ready(DiffView::Lines(lines))) => container(virtual_list(
+            Some(Diff::Ready(DiffView::Lines(lines))) => container(virtual_list_with_id(
+                Id::new(DIFF_ID),
                 &self.diff_list,
                 lines.len(),
                 layout::DIFF_ROW_HEIGHT,

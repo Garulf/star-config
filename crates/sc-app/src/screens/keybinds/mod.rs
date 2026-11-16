@@ -132,6 +132,8 @@ pub enum Message {
     ToggleConflicts,
     Scrolled(f32),
     RawScrolled(f32),
+    /// The bind table's visible height, measured as it shows or resizes.
+    TableResized(f32),
     Select(CellRef),
     ClosePanel,
     Input(iced::Event),
@@ -259,9 +261,13 @@ impl State {
                 self.raw_list.offset = offset;
                 Action::none()
             }
+            Message::TableResized(height) => {
+                self.list.viewport_height = height;
+                Action::task(self.reveal_selected())
+            }
             Message::Select(cell) => {
                 self.select(cell);
-                Action::none()
+                Action::task(self.reveal_selected())
             }
             Message::ClosePanel => {
                 self.panel = Panel::Closed;
@@ -420,6 +426,35 @@ impl State {
             move || source::open(&path),
             move |opened| Message::Opened(dir, source, opened),
         ))
+    }
+
+    /// Scrolls the table so the row being edited stays in view above the edit panel.
+    fn reveal_selected(&mut self) -> Task<Message> {
+        let (Panel::Edit(edit), Some(model)) = (&self.panel, &self.model) else {
+            return Task::none();
+        };
+        let viewport = self.list.viewport_height;
+        let index = self.lines.iter().position(|line| {
+            matches!(line, Line::Action(row)
+                if model.rows[*row].map == edit.cell.map && model.rows[*row].action == edit.cell.action)
+        });
+        let Some(index) = index.filter(|_| viewport > 0.0) else {
+            return Task::none();
+        };
+        let top = index as f32 * view::ROW_HEIGHT;
+        let bottom = top + view::ROW_HEIGHT;
+        let offset = if bottom > self.list.offset + viewport {
+            bottom - viewport
+        } else if top < self.list.offset {
+            top
+        } else {
+            return Task::none();
+        };
+        self.list.offset = offset;
+        iced::widget::operation::scroll_to(
+            view::TABLE_ID,
+            iced::widget::scrollable::AbsoluteOffset { x: 0.0, y: offset },
+        )
     }
 
     fn select(&mut self, cell: CellRef) {
