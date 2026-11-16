@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -99,17 +100,22 @@ fn set_aside(path: &Path) {
 }
 
 impl Settings {
-    pub fn load(path: &Path) -> Settings {
-        let Ok(bytes) = fs::read(path) else {
-            return Settings::default();
+    /// A missing file gives defaults, and so does a corrupt one, which is first renamed to
+    /// `settings.toml.bad`. Any other read error is returned, so the caller does not save
+    /// defaults over settings it could not read.
+    pub fn load(path: &Path) -> Result<Settings> {
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Settings::default()),
+            Err(err) => return Err(Error::io(path, err)),
         };
         let parsed = String::from_utf8(bytes)
             .ok()
             .and_then(|text| toml::from_str::<Settings>(&text).ok());
-        parsed.unwrap_or_else(|| {
+        Ok(parsed.unwrap_or_else(|| {
             set_aside(path);
             Settings::default()
-        })
+        }))
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -127,7 +133,7 @@ mod tests {
     #[test]
     fn load_missing_gives_defaults() {
         let dir = tempdir().unwrap();
-        let settings = Settings::load(&dir.path().join("settings.toml"));
+        let settings = Settings::load(&dir.path().join("settings.toml")).unwrap();
         assert_eq!(settings.snapshot_keep, 50);
         assert_eq!(settings.theme, ThemeChoice::Dark);
         assert_eq!(settings.screenshots.share_max_edge, 2560);
@@ -159,7 +165,7 @@ mod tests {
         settings.screenshots.archive_mode = ArchiveMode::Copy;
         settings.shaders.backup_dir = Some("/shaders".into());
         settings.save(&path).unwrap();
-        assert_eq!(Settings::load(&path), settings);
+        assert_eq!(Settings::load(&path).unwrap(), settings);
     }
 
     #[test]
@@ -168,7 +174,7 @@ mod tests {
         let path = dir.path().join("settings.toml");
         fs::write(&path, "this is not toml [").unwrap();
         fs::write(dir.path().join("settings.toml.bad"), "older").unwrap();
-        assert_eq!(Settings::load(&path), Settings::default());
+        assert_eq!(Settings::load(&path).unwrap(), Settings::default());
         assert!(!path.exists());
         assert_eq!(
             fs::read_to_string(dir.path().join("settings.toml.bad")).unwrap(),
@@ -181,8 +187,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.toml");
         fs::write(&path, "snapshot_keep = \"many\"\n").unwrap();
-        assert_eq!(Settings::load(&path), Settings::default());
+        assert_eq!(Settings::load(&path).unwrap(), Settings::default());
         assert!(dir.path().join("settings.toml.bad").exists());
+    }
+
+    #[test]
+    fn load_returns_other_read_errors_and_leaves_the_path_alone() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        fs::create_dir(&path).unwrap();
+        assert!(matches!(Settings::load(&path), Err(Error::Io { .. })));
+        assert!(path.is_dir());
+        assert!(!dir.path().join("settings.toml.bad").exists());
     }
 
     #[test]
@@ -190,7 +206,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.toml");
         fs::write(&path, "future_key = 1\ntheme = \"Light\"\n").unwrap();
-        let settings = Settings::load(&path);
+        let settings = Settings::load(&path).unwrap();
         assert_eq!(settings.theme, ThemeChoice::Light);
         assert_eq!(settings.snapshot_keep, 50);
         assert!(path.exists());

@@ -100,9 +100,10 @@ fn split_lines(bytes: &[u8]) -> Vec<Line> {
 
 fn invalid_key(key: &str) -> bool {
     key.is_empty()
+        || key.starts_with("--")
         || key
             .chars()
-            .any(|c| c.is_whitespace() || c == '=' || c == ';')
+            .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '=' | ';' | '"' | '\''))
 }
 
 impl UserCfg {
@@ -149,9 +150,10 @@ impl UserCfg {
             .collect()
     }
 
-    pub fn text(&self) -> String {
-        let body: Vec<u8> = self.body();
-        String::from_utf8_lossy(&body).into_owned()
+    /// The file as text for a raw view, or `None` when it is not UTF-8 and so cannot be shown
+    /// and edited as text without changing bytes nobody touched.
+    pub fn text(&self) -> Option<String> {
+        String::from_utf8(self.body()).ok()
     }
 
     fn body(&self) -> Vec<u8> {
@@ -247,6 +249,11 @@ impl Document for UserCfg {
             Op::Set { key, value } => self.set(key, value),
             Op::Remove { key } => self.remove(key),
             Op::ReplaceText(text) => {
+                if self.text().is_none() {
+                    return Err(Error::Invalid(
+                        "user.cfg is not UTF-8, so it cannot be replaced from the text view".into(),
+                    ));
+                }
                 *self = Self::from_bytes(text.as_bytes(), self.bom);
                 Ok(())
             }
@@ -408,6 +415,10 @@ mod tests {
             ("a=b", "1"),
             ("a;b", "1"),
             ("a\nb", "1"),
+            ("--x", "1"),
+            ("a\"b", "1"),
+            ("a'b", "1"),
+            ("a\u{7}b", "1"),
             ("x", "1\n2"),
             ("x", "1\r2"),
         ] {
@@ -448,10 +459,27 @@ mod tests {
     }
 
     #[test]
-    fn text_is_a_lossy_view_without_the_bom() {
+    fn text_is_the_body_without_the_bom_or_none_when_not_utf8() {
         let cfg = parse(&fixture("crlf_bom.cfg"));
-        assert!(cfg.text().starts_with("; header\r\n"));
-        assert!(parse(&fixture("odd.cfg")).text().contains('\u{fffd}'));
+        assert!(cfg.text().unwrap().starts_with("; header\r\n"));
+        assert_eq!(parse(&fixture("odd.cfg")).text(), None);
+    }
+
+    #[test]
+    fn replace_text_refuses_a_file_that_is_not_utf8() {
+        let bytes = fixture("odd.cfg");
+        let mut cfg = parse(&bytes);
+        let result = cfg.apply(&Op::ReplaceText("a = 1\n".into()));
+        assert!(matches!(result, Err(crate::error::Error::Invalid(_))));
+        assert_eq!(cfg.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn set_key_is_read_back_as_that_key() {
+        let mut cfg = parse(b"");
+        cfg.apply(&set("r_DisplayInfo", "1")).unwrap();
+        assert_eq!(cfg.get("r_DisplayInfo"), Some("1"));
+        assert_eq!(cfg.entries().len(), 1);
     }
 
     #[test]
