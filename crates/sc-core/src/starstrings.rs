@@ -418,20 +418,19 @@ pub fn install(
         });
     }
     let label = format!("Install StarStrings {}", release.name);
+    let record = InstallRecord {
+        release_name: release.name.clone(),
+        published_at: release.published_at.clone(),
+        file_sha256: hex(&hash(&new_ini)),
+        game_build: channel.build_id(),
+        installed_unix: now_unix(),
+        added_language_line: bookkeeping.added_language_line,
+        previous_language: bookkeeping.previous_language,
+    };
     let snapshot = writer.apply(scope, channel, &changes, &label)?;
-    write_record(
-        dirs,
-        scope,
-        &InstallRecord {
-            release_name: release.name.clone(),
-            published_at: release.published_at.clone(),
-            file_sha256: hex(&hash(&new_ini)),
-            game_build: channel.build_id(),
-            installed_unix: now_unix(),
-            added_language_line: bookkeeping.added_language_line,
-            previous_language: bookkeeping.previous_language,
-        },
-    )?;
+    if let Err(err) = write_record(dirs, scope, &record) {
+        return Err(writer.undo_apply(scope, channel, &snapshot.id, err));
+    }
     Ok(snapshot)
 }
 
@@ -857,6 +856,27 @@ mod tests {
         };
         assert!(!rec.added_language_line);
         assert_eq!(rec.previous_language.as_deref(), Some("german"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_puts_the_files_back_when_the_record_cannot_be_written() {
+        use crate::safe_write::testing::ReadOnly;
+        let env = env();
+        env.write(&env.channel.user_cfg(), b"g_language = german\n");
+        let records = record_path(&env.dirs, &env.scope);
+        fs::create_dir_all(records.parent().unwrap()).unwrap();
+        let result = {
+            let _guard = ReadOnly::new(records.parent().unwrap());
+            env.install(&ini(20))
+        };
+        assert!(matches!(result, Err(Error::Io { .. })));
+        assert!(!env.channel.global_ini().exists());
+        assert_eq!(env.cfg_text(), "g_language = german\n");
+        assert!(matches!(
+            status(&env.channel, &env.dirs, &env.scope),
+            Status::NotInstalled
+        ));
     }
 
     #[test]
