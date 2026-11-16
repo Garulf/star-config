@@ -294,6 +294,7 @@ impl Channel {
         let manifest: serde_json::Value = serde_json::from_str(&text).ok()?;
         let text_at = |pointer: &str| match manifest.pointer(pointer)? {
             serde_json::Value::String(text) => Some(text.clone()),
+            serde_json::Value::Number(number) => Some(number.to_string()),
             _ => None,
         };
         let id = [
@@ -564,6 +565,21 @@ mod tests {
         fs::write(
             base.path().join("Build_Manifest.id"),
             r#"{"Data":{"Version":"4.10.3","RequestedP4ChangeNum":"13165946"}}"#,
+        )
+        .unwrap();
+        let channel = Channel {
+            name: "LIVE".into(),
+            dir: base.path().to_path_buf(),
+        };
+        assert_eq!(channel.build_id().as_deref(), Some("4.10.3 (13165946)"));
+    }
+
+    #[test]
+    fn build_id_reads_numeric_change_number() {
+        let base = tempdir().unwrap();
+        fs::write(
+            base.path().join("build_manifest.id"),
+            r#"{"Data":{"Version":"4.10.3","RequestedP4ChangeNum":13165946}}"#,
         )
         .unwrap();
         let channel = Channel {
