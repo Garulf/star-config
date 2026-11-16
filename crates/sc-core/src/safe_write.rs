@@ -266,7 +266,15 @@ mod tests {
                 let path = &path;
                 scope.spawn(move || {
                     for _ in 0..20 {
-                        write_atomic(path, bytes).unwrap();
+                        match write_atomic(path, bytes) {
+                            Ok(()) => {}
+                            // Windows can refuse a replace while another writer is replacing
+                            // the same file. The loser must fail whole, which is checked below.
+                            Err(Error::Io { source, .. })
+                                if cfg!(windows)
+                                    && source.kind() == ErrorKind::PermissionDenied => {}
+                            Err(err) => panic!("{err}"),
+                        }
                     }
                 });
             }

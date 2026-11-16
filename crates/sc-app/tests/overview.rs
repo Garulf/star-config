@@ -100,7 +100,8 @@ fn cards_show_for_every_area() {
         assert!(has(&app, area.title()), "{}", area.title());
         assert!(has(&app, area.button()), "{}", area.button());
     }
-    assert!(has(&app, "~/Games/star-citizen, LIVE 4.3.2 (9876543)"));
+    let install = format!("~{0}Games{0}star-citizen", std::path::MAIN_SEPARATOR);
+    assert!(has(&app, &format!("{install}, LIVE 4.3.2 (9876543)")));
     assert!(has(&app, "Game closed"));
     assert!(has(&app, "14 screenshots"));
     assert!(has(&app, "9 settings in user.cfg"));
