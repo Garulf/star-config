@@ -489,7 +489,12 @@ fn progress_shows_bytes_and_the_current_file() {
         },
     ));
     assert!(screen.has("5.0 KB of 6.1 KB"));
-    let names = ["Data.p4k", "Bin64/StarCitizen.exe", "build_manifest.id"];
+    let exe = Path::new("Bin64").join("StarCitizen.exe");
+    let names = [
+        "Data.p4k".to_string(),
+        exe.display().to_string(),
+        "build_manifest.id".to_string(),
+    ];
     assert!(
         names
             .iter()
@@ -880,11 +885,6 @@ fn switching_channel_while_a_copy_runs_asks_first() {
 const GB: u64 = 1024 * 1024 * 1024;
 const MB: u64 = 1024 * 1024;
 
-fn sparse(path: &Path, len: u64) {
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::File::create(path).unwrap().set_len(len).unwrap();
-}
-
 fn demo_app(temp: &Path, choice: ThemeChoice) -> App {
     let mut ctx = testkit::context_with_channels(temp, &["LIVE", "PTU"]).with_probe(idle());
     ctx.settings.theme = choice;
@@ -894,8 +894,8 @@ fn demo_app(temp: &Path, choice: ThemeChoice) -> App {
         (&live.dir, 96 * GB + 410 * MB, "4.3.2", "9876543"),
         (&ptu.dir, 92 * GB + 120 * MB, "4.4.0-PTU", "9912345"),
     ] {
-        sparse(&dir.join("Data.p4k"), p4k);
-        sparse(&dir.join("Bin64/StarCitizen.exe"), 180 * MB);
+        testkit::sparse(&dir.join("Data.p4k"), p4k);
+        testkit::sparse(&dir.join("Bin64/StarCitizen.exe"), 180 * MB);
         put(
             &dir.join("build_manifest.id"),
             format!(r#"{{"Data":{{"Version":"{version}","RequestedP4ChangeNum":"{change}"}}}}"#)

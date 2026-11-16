@@ -965,7 +965,11 @@ mod tests {
                 .join("data/Localization/english/global.ini")
                 .exists()
         );
-        assert!(!env.channel.dir.join("Data").exists());
+        let names: Vec<_> = fs::read_dir(&env.channel.dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(!names.iter().any(|name| name == "Data"), "{names:?}");
     }
 
     #[test]

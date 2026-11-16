@@ -569,7 +569,28 @@ pub fn write_build(channel: &sc_core::install::Channel, version: &str, change: &
 /// A file of `len` bytes that takes no space.
 pub fn sparse(path: &Path, len: u64) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::File::create(path).unwrap().set_len(len).unwrap();
+    let file = fs::File::create(path).unwrap();
+    // NTFS sets the whole length aside unless the file is marked sparse first.
+    #[cfg(windows)]
+    let _ = std::process::Command::new("fsutil")
+        .args(["sparse", "setflag"])
+        .arg(path)
+        .output();
+    file.set_len(len).unwrap();
+}
+
+/// Sets when a folder was last changed.
+pub fn set_dir_modified(dir: &Path, when: std::time::SystemTime) {
+    let mut options = fs::File::options();
+    options.read(true);
+    // Windows opens a folder only through a backup handle, and needs write access to date it.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        options.write(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    options.open(dir).unwrap().set_modified(when).unwrap();
 }
 
 /// The demo prefix with LIVE and PTU, a launcher, an idle game and both builds, but no
@@ -845,7 +866,7 @@ pub fn shader_cache_dir(temp: &Path) -> PathBuf {
 
 fn age(dir: &Path, days: u64) {
     let when = std::time::SystemTime::now() - std::time::Duration::from_secs(days * 86_400);
-    fs::File::open(dir).unwrap().set_modified(when).unwrap();
+    set_dir_modified(dir, when);
 }
 
 /// Backs up and clears the oldest demo cache, so Maintenance lists one shader backup.

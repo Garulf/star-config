@@ -45,7 +45,7 @@ fn put(path: &Path, len: u64) {
 
 fn age(dir: &Path, days: u64) {
     let when = SystemTime::now() - Duration::from_secs(days * 86_400);
-    fs::File::open(dir).unwrap().set_modified(when).unwrap();
+    testkit::set_dir_modified(dir, when);
 }
 
 fn write_build(dir: &Path) {
