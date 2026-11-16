@@ -8,6 +8,7 @@ pub mod overview;
 pub mod screenshots;
 pub mod settings;
 pub mod starstrings;
+mod units;
 
 use crate::screen::Screen;
 use crate::widgets::{empty_state, page_fixed};
