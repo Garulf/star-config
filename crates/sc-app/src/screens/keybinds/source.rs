@@ -52,13 +52,18 @@ impl fmt::Display for SourceChoice {
     }
 }
 
-/// Carries a staged document through a message, which must be `Clone`.
+/// Carries a staged document through a message, which must be `Clone`, with how many
+/// edits were sent to be written.
 #[derive(Clone)]
-pub struct Handoff(Arc<Mutex<Option<Staged<ActionMaps>>>>);
+pub struct Handoff(Arc<Mutex<Option<Staged<ActionMaps>>>>, usize);
 
 impl Handoff {
-    fn new(staged: Staged<ActionMaps>) -> Self {
-        Self(Arc::new(Mutex::new(Some(staged))))
+    fn new(staged: Staged<ActionMaps>, count: usize) -> Self {
+        Self(Arc::new(Mutex::new(Some(staged))), count)
+    }
+
+    pub fn count(&self) -> usize {
+        self.1
     }
 
     pub fn take(&self) -> Option<Staged<ActionMaps>> {
@@ -160,7 +165,7 @@ pub fn open(path: &Path) -> Opened {
         Ok(staged) => {
             let writable = staged.base().to_bytes() == staged.loaded().bytes;
             Opened::Ready {
-                doc: Handoff::new(staged),
+                doc: Handoff::new(staged, 0),
                 writable,
             }
         }
@@ -227,6 +232,7 @@ impl From<Error> for WriteFailure {
 /// are replayed on the new file and the write is tried once more.
 pub fn apply(
     mut staged: Staged<ActionMaps>,
+    count: usize,
     writer: Writer,
     scope: Scope,
     channel: Channel,
@@ -236,7 +242,7 @@ pub fn apply(
             Ok(0) => staged.commit(&writer, &scope, &channel, LABEL),
             Ok(dropped) => {
                 return (
-                    Handoff::new(staged),
+                    Handoff::new(staged, count),
                     Err(WriteFailure::NoLongerApply(dropped)),
                 );
             }
@@ -245,7 +251,7 @@ pub fn apply(
         other => other,
     };
     let result = result.map(|info| info.id).map_err(WriteFailure::from);
-    (Handoff::new(staged), result)
+    (Handoff::new(staged, count), result)
 }
 
 /// Writes `bytes` as the layout file `target`, refusing to replace one unless `overwrite`.

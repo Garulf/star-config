@@ -13,7 +13,7 @@ use sc_core::launcher;
 use sc_core::settings::{Settings, ThemeChoice};
 use std::path::{Path, PathBuf};
 
-const KEEP_MIN: u32 = 5;
+pub const KEEP_MIN: u32 = 5;
 const KEEP_MAX: u32 = 200;
 const KEEP_STEP: u32 = 5;
 

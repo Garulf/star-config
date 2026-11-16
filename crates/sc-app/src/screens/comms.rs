@@ -2,7 +2,7 @@ use super::attr_edit::{self, AttrFile, Doc};
 use super::edits::{self, Carry, Edits, Pending, Target};
 use super::typed::{self, Kind};
 use crate::context::Context;
-use crate::screen::{Action, Screen, Toast, ToastKind};
+use crate::screen::{Action, Origin, Screen, Toast, ToastKind};
 use crate::theme::{ButtonKind, layout, space};
 use crate::widgets::{
     OptionalRow, Was, banner, button, empty_state, hint, icon_button, muted, optional_row, page,
@@ -33,6 +33,7 @@ pub struct Loaded {
 
 pub struct Applied {
     seq: u64,
+    origin: Origin,
     attrs: Option<Staged<Attributes>>,
     result: Result<Option<SnapshotInfo>>,
     count: usize,
@@ -237,6 +238,7 @@ impl State {
                 };
                 Carry::new(Applied {
                     seq,
+                    origin: target.origin(),
                     attrs,
                     result,
                     count,
@@ -256,7 +258,8 @@ impl State {
                 edits.put_back(staged);
             }
         }
-        edits::toast_for(&applied.result, applied.count).map_or_else(Action::none, Action::toast)
+        edits::toast_for(&applied.result, applied.count, &applied.origin)
+            .map_or_else(Action::none, Action::toast)
     }
 
     pub fn discard(&mut self) {

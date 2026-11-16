@@ -8,7 +8,7 @@ pub use model::CellRef;
 pub use source::{CURRENT_LABEL, Source, SourceChoice, UNRECOGNISED, layout_name};
 
 use crate::context::Context;
-use crate::screen::{Action, Confirm, Toast};
+use crate::screen::{Action, Confirm, Origin, Toast};
 use crate::screens::backups::words;
 use crate::theme::ButtonKind;
 use crate::widgets::VirtualListState;
@@ -156,8 +156,8 @@ pub enum Message {
     OpenSaveAs,
     SaveName(String),
     SaveLayout(bool),
-    LayoutSaved(String, Result<SnapshotId, WriteFailure>),
-    Applied(Handoff, Result<SnapshotId, WriteFailure>),
+    LayoutSaved(Origin, String, Result<SnapshotId, WriteFailure>),
+    Applied(Origin, Handoff, Result<SnapshotId, WriteFailure>),
 }
 
 impl State {
@@ -185,12 +185,12 @@ impl State {
             *self = Self::new();
             return Task::none();
         };
-        if self.pending() > 0 {
-            return Task::none();
-        }
         if self.channel.as_ref() != Some(&channel.dir) {
             *self = Self::new();
             self.channel = Some(channel.dir.clone());
+        }
+        if self.pending() > 0 {
+            return Task::none();
         }
         let wanted = self.source.clone();
         let dir = channel.dir.clone();
@@ -301,8 +301,10 @@ impl State {
                 Action::none()
             }
             Message::SaveLayout(overwrite) => self.save_layout(overwrite, ctx),
-            Message::LayoutSaved(name, result) => self.layout_saved(name, result, ctx),
-            Message::Applied(handoff, result) => self.applied(handoff, result),
+            Message::LayoutSaved(origin, name, result) => {
+                self.layout_saved(origin, name, result, ctx)
+            }
+            Message::Applied(origin, handoff, result) => self.applied(origin, handoff, result),
             other => {
                 self.edit_form(other);
                 Action::none()
@@ -684,11 +686,10 @@ impl State {
         let Panel::SaveAs(form) = &self.panel else {
             return Action::none();
         };
-        let (Some(scope), Some(channel), Some(staged)) =
-            (ctx.scope(), ctx.channel.clone(), self.staged())
-        else {
+        let (Some(origin), Some(staged)) = (Origin::of(ctx), self.staged()) else {
             return Action::none();
         };
+        let (scope, channel) = (origin.scope.clone(), origin.channel.clone());
         if self.saving || !self.can_save_layout() {
             return Action::none();
         }
@@ -702,7 +703,7 @@ impl State {
         self.saving = true;
         Action::task(work::background(
             move || source::save_layout(bytes, target, overwrite, writer, scope, channel),
-            move |result| Message::LayoutSaved(name, result),
+            move |result| Message::LayoutSaved(origin, name, result),
         ))
     }
 
@@ -712,20 +713,28 @@ impl State {
 
     fn layout_saved(
         &mut self,
+        origin: Origin,
         name: String,
         result: Result<SnapshotId, WriteFailure>,
         ctx: &Context,
     ) -> Action<Message> {
-        self.saving = false;
+        let here = self.channel.as_ref() == Some(&origin.channel.dir);
+        if here {
+            self.saving = false;
+        }
         match result {
             Ok(snapshot) => {
-                self.panel = Panel::Closed;
                 let toast = Toast::success(format!(
                     "Saved layout \"{name}\". Load it in game from Options, Keybindings, Control Profiles."
                 ))
-                .with_undo(snapshot);
+                .with_undo_in(vec![origin.undo(snapshot)]);
+                if !here {
+                    return Action::toast(toast);
+                }
+                self.panel = Panel::Closed;
                 Action::task(self.relist(ctx)).with_toast(toast)
             }
+            Err(WriteFailure::Exists) if !here => Action::none(),
             Err(WriteFailure::Exists) => Action::confirm(
                 Confirm::new(
                     format!("Replace layout \"{name}\"?"),
@@ -750,20 +759,27 @@ impl State {
 
     fn applied(
         &mut self,
+        origin: Origin,
         handoff: Handoff,
         result: Result<SnapshotId, WriteFailure>,
     ) -> Action<Message> {
-        let applied = self.away_pending;
-        self.away_pending = 0;
-        if let Some(staged) = handoff.take() {
-            self.doc = Doc::Ready {
-                staged: Box::new(staged),
-                writable: true,
-            };
+        let applied = handoff.count();
+        let here =
+            self.channel.as_ref() == Some(&origin.channel.dir) && matches!(self.doc, Doc::Away);
+        if here {
+            self.away_pending = 0;
+            if let Some(staged) = handoff.take() {
+                self.doc = Doc::Ready {
+                    staged: Box::new(staged),
+                    writable: true,
+                };
+            }
+            self.refresh();
         }
-        self.refresh();
         let toast = match result {
-            Ok(snapshot) => Toast::success(applied_text(applied)).with_undo(snapshot),
+            Ok(snapshot) => {
+                Toast::success(applied_text(applied)).with_undo_in(vec![origin.undo(snapshot)])
+            }
             Err(failure) => failure_toast("Could not apply the keybind changes", &failure),
         };
         Action::toast(toast)
@@ -802,9 +818,13 @@ impl State {
         } else {
             ctx.writer()
         };
+        let origin = Origin {
+            scope: scope.clone(),
+            channel: channel.clone(),
+        };
         Action::task(work::background(
-            move || source::apply(*staged, writer, scope, channel),
-            |(handoff, result)| Message::Applied(handoff, result),
+            move || source::apply(*staged, pending, writer, scope, channel),
+            move |(handoff, result)| Message::Applied(origin, handoff, result),
         ))
     }
 

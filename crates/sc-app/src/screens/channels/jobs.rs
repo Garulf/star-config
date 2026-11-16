@@ -5,7 +5,7 @@ use super::words::{self, PARTS};
 use super::{Message, PendingSwap};
 use crate::screen::{Toast, UndoIn};
 use crate::screens::backups;
-use crate::screens::edits::toast_for;
+use crate::screens::edits::failure_toast;
 use crate::work;
 use iced::Task;
 use iced::futures::channel::mpsc;
@@ -398,9 +398,7 @@ fn settings_failure(err: Error) -> Toast {
         Error::GameRunning => Toast::error(
             "Star Citizen is running, so no settings were copied. Close it and try again.",
         ),
-        Error::RollbackFailed { .. } => {
-            toast_for(&Err(err), 0).unwrap_or_else(|| Toast::error("Copying settings failed."))
-        }
+        Error::RollbackFailed { .. } => failure_toast(&err),
         other => Toast::error(format!(
             "Could not copy the settings. {} Nothing was changed.",
             sentence(&other)

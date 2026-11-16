@@ -2,7 +2,7 @@ use super::backups::when;
 use super::units;
 use crate::context::Context;
 use crate::icons;
-use crate::screen::{Action, Confirm, Screen, Toast, ToastKind};
+use crate::screen::{Action, Confirm, Origin, Screen, Toast, ToastKind};
 use crate::theme::{self, ButtonKind, Tone, layout, space};
 use crate::widgets::{
     banner, button, divider, hint, icon_button, icon_toned, label, muted, page, rows, section,
@@ -108,11 +108,11 @@ pub enum Message {
     Checked(Result<Option<Release>, Failure>),
     Install,
     InstallConfirmed,
-    Downloaded(Result<Download, Failure>),
-    Installed(Result<(String, SnapshotId), Failure>),
+    Downloaded(Origin, Result<Download, Failure>),
+    Installed(Origin, Result<(String, SnapshotId), Failure>),
     Uninstall,
     UninstallConfirmed,
-    Uninstalled(Result<SnapshotId, Failure>),
+    Uninstalled(Origin, Result<SnapshotId, Failure>),
     CheckOnStart(bool),
     OpenSource,
     Opened(Result<(), String>),
@@ -194,24 +194,29 @@ impl State {
             }
             Message::Install => self.ask_install(ctx),
             Message::InstallConfirmed => self.start_download(ctx),
-            Message::Downloaded(Ok(download)) => self.start_install(download, ctx),
-            Message::Downloaded(Err(failure)) | Message::Installed(Err(failure)) => {
-                self.finish_with_failure(failure, ctx)
+            Message::Downloaded(origin, Ok(download)) => self.start_install(origin, download, ctx),
+            Message::Downloaded(origin, Err(failure))
+            | Message::Installed(origin, Err(failure)) => {
+                self.finish_with_failure(&origin, failure, ctx)
             }
-            Message::Installed(Ok((name, snapshot))) => {
+            Message::Installed(origin, Ok((name, snapshot))) => {
                 self.work = None;
                 Action::task(self.survey_task(ctx)).with_toast(
-                    Toast::success(format!("Installed StarStrings {name}")).with_undo(snapshot),
+                    Toast::success(format!("Installed StarStrings {name}"))
+                        .with_undo_in(vec![origin.undo(snapshot)]),
                 )
             }
             Message::Uninstall => self.ask_uninstall(ctx),
             Message::UninstallConfirmed => self.start_uninstall(ctx),
-            Message::Uninstalled(Ok(snapshot)) => {
+            Message::Uninstalled(origin, Ok(snapshot)) => {
                 self.work = None;
-                Action::task(self.survey_task(ctx))
-                    .with_toast(Toast::success("Removed StarStrings").with_undo(snapshot))
+                Action::task(self.survey_task(ctx)).with_toast(
+                    Toast::success("Removed StarStrings").with_undo_in(vec![origin.undo(snapshot)]),
+                )
             }
-            Message::Uninstalled(Err(failure)) => self.finish_with_failure(failure, ctx),
+            Message::Uninstalled(origin, Err(failure)) => {
+                self.finish_with_failure(&origin, failure, ctx)
+            }
             Message::CheckOnStart(on) => {
                 let mut settings = ctx.settings.clone();
                 settings.starstrings.check_on_start = on;
@@ -323,7 +328,7 @@ impl State {
     }
 
     fn start_download(&mut self, ctx: &Context) -> Action<Message> {
-        let Some(release) = self.release().cloned() else {
+        let (Some(release), Some(origin)) = (self.release().cloned(), Origin::of(ctx)) else {
             return Action::none();
         };
         if !self.can_change(ctx) {
@@ -338,17 +343,28 @@ impl State {
                     .map(|bytes| Download(Arc::new(bytes)))
                     .map_err(|err| Failure::from_error(&err, Doing::Install))
             },
-            Message::Downloaded,
+            move |result| Message::Downloaded(origin, result),
         ))
     }
 
-    fn start_install(&mut self, download: Download, ctx: &Context) -> Action<Message> {
-        let (Some(release), Some(channel), Some(scope)) =
-            (self.release().cloned(), ctx.channel.clone(), ctx.scope())
-        else {
+    fn start_install(
+        &mut self,
+        origin: Origin,
+        download: Download,
+        ctx: &Context,
+    ) -> Action<Message> {
+        let Some(release) = self.release().cloned() else {
             self.work = None;
             return Action::none();
         };
+        if !origin.is_current(ctx) {
+            self.work = None;
+            return Action::toast(Toast::info(format!(
+                "StarStrings was downloaded for {} but you switched channel, so it was not installed.",
+                origin.channel.name
+            )));
+        }
+        let (scope, channel) = (origin.scope.clone(), origin.channel.clone());
         self.work = Some(Work::Installing);
         let writer = ctx.writer();
         let dirs = ctx.dirs.clone();
@@ -370,7 +386,7 @@ impl State {
                 .map(|snapshot| (release.name.clone(), snapshot.id))
                 .map_err(|err| Failure::from_error(&err, Doing::Install))
             },
-            Message::Installed,
+            move |result| Message::Installed(origin, result),
         ))
     }
 
@@ -389,9 +405,10 @@ impl State {
     }
 
     fn start_uninstall(&mut self, ctx: &Context) -> Action<Message> {
-        let (Some(channel), Some(scope)) = (ctx.channel.clone(), ctx.scope()) else {
+        let Some(origin) = Origin::of(ctx) else {
             return Action::none();
         };
+        let (scope, channel) = (origin.scope.clone(), origin.channel.clone());
         if !self.can_change(ctx) {
             return Action::none();
         }
@@ -405,12 +422,23 @@ impl State {
                     .map(|snapshot| snapshot.id)
                     .map_err(|err| Failure::from_error(&err, Doing::Uninstall))
             },
-            Message::Uninstalled,
+            move |result| Message::Uninstalled(origin, result),
         ))
     }
 
-    fn finish_with_failure(&mut self, failure: Failure, ctx: &Context) -> Action<Message> {
+    fn finish_with_failure(
+        &mut self,
+        origin: &Origin,
+        failure: Failure,
+        ctx: &Context,
+    ) -> Action<Message> {
         self.work = None;
+        if !origin.is_current(ctx) {
+            return Action::toast(Toast::error(format!(
+                "{}: {}",
+                origin.channel.name, failure.message
+            )));
+        }
         self.failure = Some(failure);
         Action::task(self.survey_task(ctx))
     }

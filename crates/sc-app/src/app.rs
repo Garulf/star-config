@@ -91,7 +91,7 @@ pub enum Message {
     CloseDialog,
     DismissToast(usize),
     UndoToast(usize),
-    Restored(Result<(), String>),
+    Restored(Vec<Scope>, Result<(), String>),
     Recover(Scope, Channel, SnapshotId),
     KeepAsIs(Scope, SnapshotId),
     StopCopyAnd(Box<Message>),
@@ -288,9 +288,7 @@ impl App {
     fn handle(&mut self, action: Action<Message>) -> Task<Message> {
         let mut tasks = vec![action.task];
         if let Some(toast) = action.toast {
-            if toast.undo.is_some() {
-                tasks.push(self.prune());
-            }
+            tasks.push(self.prune(scopes_of(&toast.undo_in)));
             self.push_toast(toast);
         }
         if let Some(confirm) = action.confirm {
@@ -310,18 +308,25 @@ impl App {
         Task::batch(tasks)
     }
 
-    /// Deletes the oldest finished snapshots of the selected channel beyond the kept count.
-    fn prune(&self) -> Task<Message> {
-        let Some(scope) = self.ctx.scope() else {
+    /// Deletes the oldest finished snapshots of each of `scopes` beyond the kept count.
+    fn prune(&self, scopes: Vec<Scope>) -> Task<Message> {
+        if scopes.is_empty() {
             return Task::none();
-        };
+        }
         let store = self.ctx.writer().store().clone();
-        let keep = self.ctx.settings.snapshot_keep;
+        let keep = self
+            .ctx
+            .settings
+            .snapshot_keep
+            .max(settings::KEEP_MIN as usize);
         work::background(
             move || {
-                store
-                    .prune(&scope, keep)
-                    .map_err(|err| backups::words(&err))
+                scopes.iter().try_fold(0, |pruned, scope| {
+                    store
+                        .prune(scope, keep)
+                        .map(|count| pruned + count)
+                        .map_err(|err| backups::words(&err))
+                })
             },
             Message::Pruned,
         )
@@ -533,11 +538,11 @@ impl App {
                 Task::none()
             }
             Message::UndoToast(index) => self.undo_toast(index),
-            Message::Restored(result) => {
+            Message::Restored(scopes, result) => {
                 let pruned = match result {
                     Ok(()) => {
                         self.push_toast(Toast::success("Restored the previous files"));
-                        self.prune()
+                        self.prune(scopes)
                     }
                     Err(err) => {
                         self.push_toast(Toast::error(err));
@@ -548,9 +553,10 @@ impl App {
             }
             Message::Recover(scope, channel, snapshot) => {
                 let writer = self.ctx.writer();
+                let scopes = vec![scope.clone()];
                 work::background(
                     move || backups::restore(&writer, &scope, &channel, &snapshot).map(|_| ()),
-                    Message::Restored,
+                    move |result| Message::Restored(scopes, result),
                 )
             }
             Message::KeepAsIs(scope, snapshot) => {
@@ -777,34 +783,19 @@ impl App {
     }
 
     fn undo_toast(&mut self, index: usize) -> Task<Message> {
-        let Some((undo, mut targets)) = self
-            .toasts
-            .get(index)
-            .map(|toast| (toast.undo.clone(), toast.undo_in.clone()))
-        else {
+        let Some(targets) = self.toasts.get(index).map(|toast| toast.undo_in.clone()) else {
             return Task::none();
         };
-        if undo.is_none() {
+        if targets.is_empty() {
             return Task::none();
         }
         if self.ctx.read_only() {
             self.push_toast(Toast::error(backups::CLOSE_GAME));
             return Task::none();
         }
-        if targets.is_empty() {
-            let (Some(scope), Some(channel), Some(snapshot)) =
-                (self.ctx.scope(), self.ctx.channel.clone(), undo)
-            else {
-                return Task::none();
-            };
-            targets.push(UndoIn {
-                scope,
-                channel,
-                snapshot,
-            });
-        }
         self.remove_toast(index);
         let writer = self.ctx.writer();
+        let scopes = scopes_of(&targets);
         work::background(
             move || {
                 targets.iter().rev().try_for_each(|target| {
@@ -812,7 +803,7 @@ impl App {
                         .map(|_| ())
                 })
             },
-            Message::Restored,
+            move |result| Message::Restored(scopes, result),
         )
     }
 
@@ -1136,6 +1127,16 @@ fn channel_of(ctx: &Context, scope: &Scope) -> Option<Channel> {
         .find(|channel| channel.name == scope.channel)
 }
 
+fn scopes_of(targets: &[UndoIn]) -> Vec<Scope> {
+    let mut scopes: Vec<Scope> = Vec::new();
+    for target in targets {
+        if !scopes.contains(&target.scope) {
+            scopes.push(target.scope.clone());
+        }
+    }
+    scopes
+}
+
 fn detect_launch(ctx: &Context) -> Option<LaunchMethod> {
     let install = ctx.install.as_ref()?;
     let saved = ctx.settings.launch_commands.get(&install.key());
@@ -1372,6 +1373,54 @@ mod tests {
             labels,
             ["Apply and launch", "Launch without applying", "Cancel"]
         );
+    }
+
+    #[test]
+    fn a_toast_prunes_the_channel_it_undoes_and_keeps_the_minimum() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut ctx = testkit::context_with_channels(temp.path(), &["LIVE", "PTU"]);
+        ctx.settings.snapshot_keep = 0;
+        let install_key = ctx.install.as_ref().unwrap().key();
+        let store = ctx.writer().store().clone();
+        let mut last = Vec::new();
+        for channel in ctx.channels.clone() {
+            std::fs::write(channel.user_cfg(), "a = 1\n").unwrap();
+            let scope = Scope {
+                install_key: install_key.clone(),
+                channel: channel.name.clone(),
+            };
+            for _ in 0..7 {
+                let info = store
+                    .snapshot(&scope, &channel, &[channel.user_cfg()], "test")
+                    .unwrap();
+                last.push(UndoIn {
+                    scope: scope.clone(),
+                    channel: channel.clone(),
+                    snapshot: info.id,
+                });
+            }
+        }
+        let ptu = last.pop().unwrap();
+        let live_scope = last[0].scope.clone();
+        let mut app = App::with(ctx);
+        let task = app.handle(Action::toast(
+            Toast::success("Copied").with_undo_in(vec![ptu.clone()]),
+        ));
+        testkit::settle(&mut app, task);
+        assert_eq!(
+            store.list(&ptu.scope).unwrap().len(),
+            settings::KEEP_MIN as usize
+        );
+        assert_eq!(store.list(&live_scope).unwrap().len(), 7);
+    }
+
+    #[test]
+    fn undo_without_a_target_does_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut app = App::with(testkit::context_with_channels(temp.path(), &["LIVE"]));
+        app.push_toast(Toast::success("good").with_undo(SnapshotId("x".into())));
+        let _ = app.update(Message::UndoToast(0));
+        assert_eq!(app.toasts().len(), 1);
     }
 
     #[test]

@@ -41,6 +41,7 @@ const THUMB_EDGE: u32 = 480;
 /// What a rescan found. The index is read from disk only the first time.
 #[derive(Debug, Clone)]
 pub struct Scan {
+    install: PathBuf,
     shots: Vec<Shot>,
     index: Option<Index>,
 }
@@ -197,15 +198,16 @@ impl State {
     }
 
     pub fn reload(&mut self, ctx: &Context) -> Task<Message> {
-        if ctx.install.is_none() {
+        let Some(install) = ctx.install.as_ref().map(|install| install.root.clone()) else {
             return Task::none();
-        }
+        };
         self.scanning = true;
         let channels = ctx.channels.clone();
         let archive = self.archive_dir(ctx);
         let index = self.index.is_none().then(|| index_path(ctx));
         work::background(
             move || Scan {
+                install,
                 shots: screenshots::scan(&channels, archive.as_deref()),
                 index: index.map(|path| Index::load(&path)),
             },
@@ -221,6 +223,9 @@ impl State {
     pub fn update(&mut self, message: Message, ctx: &Context) -> Action<Message> {
         match message {
             Message::Scanned(scan) => {
+                if ctx.install.as_ref().map(|install| &install.root) != Some(&scan.install) {
+                    return Action::none();
+                }
                 self.take(*scan);
                 Action::task(self.request_thumbs(ctx))
             }

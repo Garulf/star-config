@@ -1,7 +1,7 @@
 //! Staged edits that keep showing while a background write runs, and the guarded write
 //! that replays them once when another writer changed the file first.
 
-use crate::screen::Toast;
+use crate::screen::{Origin, Toast};
 use sc_core::backup::{Scope, SnapshotInfo};
 use sc_core::error::{Error, Result};
 use sc_core::guard::{Change, Writer};
@@ -223,6 +223,15 @@ pub struct Target {
     pub label: &'static str,
 }
 
+impl Target {
+    pub fn origin(&self) -> Origin {
+        Origin {
+            scope: self.scope.clone(),
+            channel: self.channel.clone(),
+        }
+    }
+}
+
 /// Writes every file that has changes in one snapshot. When a file changed on disk since it
 /// was loaded, reloads every file, replays the staged edits and tries once more.
 /// `Ok(None)` means there was nothing to write.
@@ -266,11 +275,17 @@ fn write_once(target: &Target, files: &mut [&mut dyn Pending]) -> Result<Option<
     Ok(Some(info))
 }
 
-/// The toast that reports a guarded write of `count` staged changes.
-pub fn toast_for(result: &Result<Option<SnapshotInfo>>, count: usize) -> Option<Toast> {
+/// The toast that reports a guarded write of `count` staged changes into `origin`.
+pub fn toast_for(
+    result: &Result<Option<SnapshotInfo>>,
+    count: usize,
+    origin: &Origin,
+) -> Option<Toast> {
     match result {
         Ok(None) => None,
-        Ok(Some(info)) => Some(Toast::success(applied_text(count)).with_undo(info.id.clone())),
+        Ok(Some(info)) => Some(
+            Toast::success(applied_text(count)).with_undo_in(vec![origin.undo(info.id.clone())]),
+        ),
         Err(err) => Some(failure_toast(err)),
     }
 }
@@ -283,7 +298,7 @@ fn applied_text(count: usize) -> String {
     }
 }
 
-fn failure_toast(err: &Error) -> Toast {
+pub fn failure_toast(err: &Error) -> Toast {
     match err {
         Error::ChangedOnDisk { .. } => Toast::info(CHANGED_ON_DISK),
         Error::GameRunning => {

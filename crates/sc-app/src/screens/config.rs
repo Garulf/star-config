@@ -5,7 +5,7 @@ use super::attr_edit::{self, AttrFile, Doc};
 use super::edits::{self, Carry, Edits, Pending, Target, changed_keys};
 use super::typed::{self, Kind};
 use crate::context::Context;
-use crate::screen::{Action, Screen, Toast, ToastKind};
+use crate::screen::{Action, Origin, Screen, Toast, ToastKind};
 use crate::theme::{self, ButtonKind, layout, size, space};
 use crate::widgets::{
     OptionalRow, VirtualListState, Was, banner, button, empty_state, hint, muted, optional_row,
@@ -104,6 +104,7 @@ pub struct Loaded {
 
 pub struct Applied {
     seq: u64,
+    origin: Origin,
     cfg: Option<Staged<UserCfg>>,
     attrs: Option<Staged<Attributes>>,
     result: Result<Option<SnapshotInfo>>,
@@ -487,6 +488,7 @@ impl State {
                 };
                 Carry::new(Applied {
                     seq,
+                    origin: target.origin(),
                     cfg,
                     attrs,
                     result,
@@ -512,7 +514,8 @@ impl State {
             self.cfg_changed();
             self.refresh_text();
         }
-        edits::toast_for(&applied.result, applied.count).map_or_else(Action::none, Action::toast)
+        edits::toast_for(&applied.result, applied.count, &applied.origin)
+            .map_or_else(Action::none, Action::toast)
     }
 
     pub fn discard(&mut self) {

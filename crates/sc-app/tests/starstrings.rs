@@ -669,3 +669,35 @@ fn starstrings_pictures() {
     testkit::feed(&mut app, [app::Message::Navigate(Screen::StarStrings)]);
     shot(&app, "starstrings-fresh-dark");
 }
+
+#[test]
+fn a_channel_switch_during_the_download_installs_nothing() {
+    let http = Arc::new(FakeHttp::good());
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_with_channels(temp.path(), &["LIVE", "PTU"]).with_probe(idle());
+    let mut screen = Harness {
+        _temp: temp,
+        state: State::with_http(http.clone()),
+        ctx,
+        seen: Seen::default(),
+    };
+    let live = screen.ctx.channel.clone().unwrap();
+    screen.reload();
+    screen.click("Check for updates");
+    let action = screen.state.update(Message::Install, &screen.ctx);
+    let download = screen.record(action);
+    assert!(screen.ctx.set_channel("PTU"));
+    screen.reload();
+    screen.run(download);
+
+    assert!(!screen.global_ini().exists());
+    assert!(!screen.user_cfg().exists());
+    assert!(!live.global_ini().exists());
+    assert!(!live.user_cfg().exists());
+    let toast = screen.seen.toasts.last().expect("a toast");
+    assert_eq!(
+        toast.text,
+        "StarStrings was downloaded for LIVE but you switched channel, so it was not installed."
+    );
+    assert!(toast.undo_in.is_empty());
+}

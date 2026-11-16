@@ -462,3 +462,52 @@ fn snapshots() {
         }
     }
 }
+
+#[test]
+fn apply_result_after_a_channel_switch_stays_with_the_first_channel() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_with_channels(temp.path(), &["LIVE", "PTU"]);
+    let live = ctx.channel.clone().unwrap();
+    let ptu = ctx
+        .channels
+        .iter()
+        .find(|c| c.name == "PTU")
+        .unwrap()
+        .clone();
+    testkit::write_channel_files(&live, Some(b"r_displayInfo = 0\n"), None);
+    testkit::write_channel_files(&ptu, Some(b"r_displayInfo = 2\n"), None);
+    let mut app = App::with(ctx);
+    feed(&mut app, [Message::Navigate(Screen::Config)]);
+    feed(&mut app, [Message::Config(set("r_displayInfo", "1"))]);
+    let applying = app.update(Message::Apply);
+    feed(
+        &mut app,
+        [Message::PickChannel("PTU".into()), Message::DialogAction(0)],
+    );
+    assert_eq!(app.context().channel.as_ref().unwrap().name, "PTU");
+    testkit::settle(&mut app, applying);
+
+    assert_eq!(
+        fs::read_to_string(live.user_cfg()).unwrap(),
+        "r_displayInfo = 1\n"
+    );
+    assert_eq!(
+        fs::read_to_string(ptu.user_cfg()).unwrap(),
+        "r_displayInfo = 2\n"
+    );
+    assert_eq!(app.pending(Screen::Config), 0);
+    let index = app.toasts().len() - 1;
+    let toast = &app.toasts()[index];
+    assert_eq!(toast.undo_in.len(), 1);
+    assert_eq!(toast.undo_in[0].channel.name, "LIVE");
+
+    feed(&mut app, [Message::UndoToast(index)]);
+    assert_eq!(
+        fs::read_to_string(live.user_cfg()).unwrap(),
+        "r_displayInfo = 0\n"
+    );
+    assert_eq!(
+        app.toasts().last().unwrap().text,
+        "Restored the previous files"
+    );
+}

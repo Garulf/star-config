@@ -1,3 +1,4 @@
+use crate::context::Context;
 use crate::icons;
 use crate::theme::ButtonKind;
 use iced::Task;
@@ -82,16 +83,45 @@ pub struct Toast {
     pub kind: ToastKind,
     pub text: String,
     pub undo: Option<SnapshotId>,
-    /// Set when Undo must restore snapshots of channels other than the selected one.
+    /// What Undo restores, each snapshot in the channel it was taken in.
     pub undo_in: Vec<UndoIn>,
 }
 
-/// A snapshot and the channel it belongs to, for an Undo outside the selected channel.
+/// A snapshot and the channel it belongs to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UndoIn {
     pub scope: Scope,
     pub channel: Channel,
     pub snapshot: SnapshotId,
+}
+
+/// The channel a background job was started for. Its result belongs there, whatever
+/// channel is selected when it arrives.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Origin {
+    pub scope: Scope,
+    pub channel: Channel,
+}
+
+impl Origin {
+    pub fn of(ctx: &Context) -> Option<Self> {
+        Some(Self {
+            scope: ctx.scope()?,
+            channel: ctx.channel.clone()?,
+        })
+    }
+
+    pub fn is_current(&self, ctx: &Context) -> bool {
+        ctx.scope().as_ref() == Some(&self.scope)
+    }
+
+    pub fn undo(&self, snapshot: SnapshotId) -> UndoIn {
+        UndoIn {
+            scope: self.scope.clone(),
+            channel: self.channel.clone(),
+            snapshot,
+        }
+    }
 }
 
 impl Toast {
@@ -116,6 +146,8 @@ impl Toast {
         Self::new(ToastKind::Error, text)
     }
 
+    /// Shows Undo without saying where to restore, so pressing it does nothing. Only for
+    /// pictures of the toast; real results use [`Toast::with_undo_in`].
     pub fn with_undo(mut self, snapshot: SnapshotId) -> Self {
         self.undo = Some(snapshot);
         self

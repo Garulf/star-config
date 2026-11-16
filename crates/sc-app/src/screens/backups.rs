@@ -4,7 +4,8 @@ pub(super) mod when;
 pub use files::{CLOSE_GAME, DiffView, FileRow, FileState, restore, words};
 
 use crate::context::Context;
-use crate::screen::{Action, Confirm, Screen, Toast, ToastKind};
+use crate::screen::{Action, Confirm, Origin, Screen, Toast, ToastKind};
+use crate::screens::settings::KEEP_MIN;
 use crate::theme::{self, ButtonKind, FONT_MONO, FONT_SEMIBOLD, Tone, layout, size, space};
 use crate::widgets::{
     VirtualListState, banner, button, cell, empty_state, heading, hint, icon_button, page_fixed,
@@ -73,7 +74,7 @@ pub enum Message {
     SnapshotTaken(Result<SnapshotId, String>),
     AskRestore(SnapshotId),
     Restore(SnapshotId),
-    Restored(Result<(SnapshotId, String), String>),
+    Restored(Origin, Result<(SnapshotId, String), String>),
     AskDelete(SnapshotId),
     Delete(SnapshotId),
     Deleted(Result<(), String>),
@@ -154,10 +155,12 @@ impl State {
             }
             Message::AskRestore(id) => self.ask_restore(id),
             Message::Restore(id) => self.restore(id, ctx),
-            Message::Restored(result) => {
+            Message::Restored(origin, result) => {
                 self.busy = false;
                 let toast = match result {
-                    Ok((before, done)) => Toast::success(done).with_undo(before),
+                    Ok((before, done)) => {
+                        Toast::success(done).with_undo_in(vec![origin.undo(before)])
+                    }
                     Err(err) => Toast::error(err),
                 };
                 Action::task(self.reload(ctx)).with_toast(toast)
@@ -316,7 +319,7 @@ impl State {
         }
         self.busy = true;
         let store = ctx.writer().store().clone();
-        let keep = ctx.settings.snapshot_keep;
+        let keep = ctx.settings.snapshot_keep.max(KEEP_MIN as usize);
         Action::task(work::background(
             move || {
                 let taken = store
@@ -351,7 +354,7 @@ impl State {
     }
 
     fn restore(&mut self, id: SnapshotId, ctx: &Context) -> Action<Message> {
-        let (Some(scope), Some(channel)) = (ctx.scope(), ctx.channel.clone()) else {
+        let Some(origin) = Origin::of(ctx) else {
             return Action::none();
         };
         if self.busy {
@@ -366,9 +369,10 @@ impl State {
             None => "Restored the files".to_string(),
         };
         let writer = ctx.writer();
+        let (scope, channel) = (origin.scope.clone(), origin.channel.clone());
         Action::task(work::background(
             move || restore(&writer, &scope, &channel, &id).map(|before| (before, done)),
-            Message::Restored,
+            move |result| Message::Restored(origin, result),
         ))
     }
 

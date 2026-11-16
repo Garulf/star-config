@@ -778,3 +778,56 @@ fn selected_row_scrolls_into_view_above_the_edit_panel() {
     send(&mut app, keybinds::Message::TableResized(240.0));
     assert!(has(&app, "v_weapon_toggle_gimbal_mode"));
 }
+
+#[test]
+fn a_channel_switch_during_apply_shows_the_new_channel() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_with_channels(temp.path(), &["LIVE", "PTU"]);
+    let live = actionmaps(&ctx);
+    let ptu_channel = ctx
+        .channels
+        .iter()
+        .find(|c| c.name == "PTU")
+        .unwrap()
+        .clone();
+    let ptu = ptu_channel.actionmaps_xml();
+    write(&live, DEMO);
+    write(&ptu, DEMO);
+    let mut app = open(ctx);
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Keyboard,
+        1,
+    );
+    clicked(&mut app, "Reset to default");
+    let applying = app.update(Message::Apply);
+    feed(
+        &mut app,
+        [Message::PickChannel("PTU".into()), Message::DialogAction(0)],
+    );
+    testkit::settle(&mut app, applying);
+
+    assert_ne!(read(&live), DEMO);
+    assert_eq!(read(&ptu), DEMO);
+    assert_eq!(pending(&app), 0);
+    assert!(!has(&app, "Was Space"));
+    let first = last_toast(&app).clone();
+    assert_eq!(first.text, "Applied 1 keybind change");
+    assert_eq!(first.undo_in[0].channel.name, "LIVE");
+
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Keyboard,
+        1,
+    );
+    clicked(&mut app, "Reset to default");
+    feed(&mut app, [Message::Apply]);
+    assert_eq!(read(&ptu), read(&live));
+    let second = last_toast(&app);
+    assert_eq!(second.kind, ToastKind::Success);
+    assert_eq!(second.undo_in[0].channel.name, "PTU");
+}

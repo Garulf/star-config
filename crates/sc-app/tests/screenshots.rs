@@ -16,6 +16,7 @@ use sc_app::screens::screenshots::{
     Clipboard, ClipboardCell, FileAction, IMAGE_COPIED, MOVED_TO_TRASH, Message, NO_ARCHIVE,
     NO_CLIPBOARD, STAYS_ON_CLIPBOARD, Services, Source, State, grid,
 };
+use sc_core::install::Install;
 use sc_core::process::{FixedProbe, RunState};
 use sc_core::settings::{ArchiveMode, ThemeChoice};
 use std::fs;
@@ -927,4 +928,18 @@ fn screenshots_pictures() {
             shot(&app, "screenshots-viewer-dark");
         }
     }
+}
+
+#[test]
+fn a_scan_of_another_install_is_not_shown() {
+    let mut screen = Harness::new();
+    screen.picture("LIVE", &shot_name(0, 10, 0), local_unix(0, 10, 0));
+    let scan = screen.state.reload(&screen.ctx);
+    let other = testkit::make_install(&screen.temp.path().join("other"), &["LIVE"]);
+    let install = Install::from_dir(&other).unwrap();
+    let channels = install.channels();
+    screen.ctx.set_install(Some(install), channels);
+    screen.reload();
+    screen.run(scan);
+    assert!(screen.has(EMPTY_BODY));
 }

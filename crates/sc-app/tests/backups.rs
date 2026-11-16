@@ -464,10 +464,10 @@ fn decide_later_leaves_it_and_the_list_shows_interrupted() {
 fn snapshots_beyond_the_keep_count_are_pruned() {
     let temp = tempfile::tempdir().unwrap();
     let mut ctx = context(temp.path());
-    ctx.settings.snapshot_keep = 3;
+    ctx.settings.snapshot_keep = 5;
     let cfg = channel(&ctx).user_cfg();
     write(&cfg, b"old\n");
-    for label in ["One", "Two", "Three", "Four"] {
+    for label in ["One", "Two", "Three", "Four", "Five", "Six"] {
         snapshot(&ctx, std::slice::from_ref(&cfg), label);
     }
     let mut app = App::with(ctx.clone());
@@ -475,28 +475,51 @@ fn snapshots_beyond_the_keep_count_are_pruned() {
     clicked(&mut app, "Snapshot now");
     let listed = store(&ctx).list(&scope(&ctx)).unwrap();
     let labels: Vec<&str> = listed.iter().map(|info| info.label.as_str()).collect();
-    assert_eq!(labels, [backups::MANUAL_LABEL, "Four", "Three"]);
-    assert!(has(&app, "3 snapshots"));
+    assert_eq!(
+        labels,
+        [backups::MANUAL_LABEL, "Six", "Five", "Four", "Three"]
+    );
+    assert!(has(&app, "5 snapshots"));
+}
+
+#[test]
+fn a_keep_count_below_the_minimum_still_keeps_the_minimum() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut ctx = context(temp.path());
+    ctx.settings.snapshot_keep = 0;
+    let cfg = channel(&ctx).user_cfg();
+    write(&cfg, b"old\n");
+    for label in ["One", "Two", "Three", "Four", "Five", "Six"] {
+        snapshot(&ctx, std::slice::from_ref(&cfg), label);
+    }
+    let mut app = App::with(ctx.clone());
+    open_backups(&mut app);
+    clicked(&mut app, "Snapshot now");
+    let listed = store(&ctx).list(&scope(&ctx)).unwrap();
+    assert_eq!(listed.len(), 5);
+    assert_eq!(listed[0].label, backups::MANUAL_LABEL);
 }
 
 #[test]
 fn a_restore_prunes_too() {
     let temp = tempfile::tempdir().unwrap();
     let mut ctx = context(temp.path());
-    ctx.settings.snapshot_keep = 2;
+    ctx.settings.snapshot_keep = 5;
     let cfg = channel(&ctx).user_cfg();
     write(&cfg, b"old\n");
-    snapshot(&ctx, std::slice::from_ref(&cfg), "One");
-    snapshot(&ctx, std::slice::from_ref(&cfg), "Two");
+    for label in ["One", "Two", "Three", "Four", "Five"] {
+        snapshot(&ctx, std::slice::from_ref(&cfg), label);
+    }
     write(&cfg, b"new\n");
     let mut app = App::with(ctx.clone());
     open_backups(&mut app);
     clicked(&mut app, "Restore");
     choose(&mut app, "Restore");
     let listed = store(&ctx).list(&scope(&ctx)).unwrap();
-    assert_eq!(listed.len(), 2);
+    assert_eq!(listed.len(), 5);
     assert!(listed[0].label.starts_with("Before restore of "));
-    assert_eq!(listed[1].label, "Two");
+    assert_eq!(listed[1].label, "Five");
+    assert_eq!(listed[4].label, "Two");
 }
 
 fn fake(index: usize) -> SnapshotInfo {
