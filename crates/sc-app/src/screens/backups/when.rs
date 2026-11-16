@@ -1,6 +1,6 @@
 //! How snapshot times and labels read in the UI, in local time.
 
-use chrono::{DateTime, Datelike, Local, NaiveDateTime};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveDateTime};
 
 const RESTORE_PREFIX: &str = "Before restore of ";
 
@@ -38,6 +38,22 @@ pub(crate) fn short(at: NaiveDateTime, now: NaiveDateTime) -> String {
 /// `14 November 2026, 19:02`.
 pub(crate) fn full(at: NaiveDateTime) -> String {
     at.format("%-d %B %Y, %H:%M").to_string()
+}
+
+/// `Today`, `Yesterday`, or the whole date as `Saturday 14 November 2026`.
+pub(crate) fn day_heading(day: NaiveDate, today: NaiveDate) -> String {
+    if day == today {
+        "Today".to_string()
+    } else if today.pred_opt() == Some(day) {
+        "Yesterday".to_string()
+    } else {
+        day.format("%A %-d %B %Y").to_string()
+    }
+}
+
+/// `21:14`.
+pub(crate) fn clock(at: NaiveDateTime) -> String {
+    at.format("%H:%M").to_string()
 }
 
 /// The UTC time a snapshot id was stamped with, as local time.
@@ -96,6 +112,18 @@ mod tests {
     #[test]
     fn full_spells_out_the_month() {
         assert_eq!(full(at(14, 19, 2)), "14 November 2026, 19:02");
+    }
+
+    #[test]
+    fn day_headings_say_today_yesterday_or_the_whole_date() {
+        let today = at(15, 22, 0).date();
+        assert_eq!(day_heading(at(15, 1, 0).date(), today), "Today");
+        assert_eq!(day_heading(at(14, 1, 0).date(), today), "Yesterday");
+        assert_eq!(
+            day_heading(at(13, 1, 0).date(), today),
+            "Friday 13 November 2026"
+        );
+        assert_eq!(clock(at(3, 9, 5)), "09:05");
     }
 
     #[test]

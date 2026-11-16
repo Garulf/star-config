@@ -290,3 +290,234 @@ pub fn write_channel_files(
         fs::write(path, bytes).unwrap();
     }
 }
+
+/// Colours of one made-up sky: top and bottom of the gradient, nebula glow, the planet's
+/// two band colours and the light that hits it.
+struct Look {
+    top: [f32; 3],
+    bottom: [f32; 3],
+    glow: [f32; 3],
+    body: [f32; 3],
+    band: [f32; 3],
+    light: [f32; 3],
+}
+
+const LOOKS: [Look; 4] = [
+    Look {
+        top: [3.0, 6.0, 18.0],
+        bottom: [10.0, 22.0, 54.0],
+        glow: [40.0, 80.0, 170.0],
+        body: [70.0, 120.0, 200.0],
+        band: [28.0, 58.0, 120.0],
+        light: [205.0, 225.0, 255.0],
+    },
+    Look {
+        top: [8.0, 4.0, 4.0],
+        bottom: [42.0, 16.0, 8.0],
+        glow: [160.0, 64.0, 22.0],
+        body: [196.0, 104.0, 52.0],
+        band: [118.0, 48.0, 24.0],
+        light: [255.0, 214.0, 172.0],
+    },
+    Look {
+        top: [2.0, 9.0, 11.0],
+        bottom: [6.0, 32.0, 36.0],
+        glow: [22.0, 120.0, 120.0],
+        body: [70.0, 168.0, 156.0],
+        band: [24.0, 88.0, 92.0],
+        light: [205.0, 255.0, 245.0],
+    },
+    Look {
+        top: [7.0, 4.0, 16.0],
+        bottom: [30.0, 12.0, 54.0],
+        glow: [112.0, 52.0, 176.0],
+        body: [158.0, 108.0, 206.0],
+        band: [78.0, 44.0, 130.0],
+        light: [236.0, 216.0, 255.0],
+    },
+];
+
+struct Lcg(u64);
+
+impl Lcg {
+    fn unit(&mut self) -> f32 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (self.0 >> 40) as f32 / (1u64 << 24) as f32
+    }
+
+    fn between(&mut self, low: f32, high: f32) -> f32 {
+        low + (high - low) * self.unit()
+    }
+}
+
+struct Canvas {
+    width: usize,
+    height: usize,
+    pixels: Vec<[f32; 3]>,
+}
+
+impl Canvas {
+    fn add(&mut self, x: i64, y: i64, color: [f32; 3], amount: f32) {
+        if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height {
+            return;
+        }
+        let pixel = &mut self.pixels[y as usize * self.width + x as usize];
+        for (channel, value) in pixel.iter_mut().zip(color) {
+            *channel += value * amount;
+        }
+    }
+
+    fn sky(&mut self, look: &Look, rng: &mut Lcg) {
+        let (w, h) = (self.width as f32, self.height as f32);
+        let (glow_x, glow_y) = (rng.between(0.1, 0.9) * w, rng.between(0.1, 0.5) * h);
+        let spread = 2.0 * (rng.between(0.25, 0.45) * w).powi(2);
+        for y in 0..self.height {
+            let t = (y as f32 / h).powf(1.2);
+            for x in 0..self.width {
+                let distance = (x as f32 - glow_x).powi(2) + (y as f32 - glow_y).powi(2);
+                let glow = 0.35 * (-distance / spread).exp();
+                self.pixels[y * self.width + x] = std::array::from_fn(|c| {
+                    look.top[c] + (look.bottom[c] - look.top[c]) * t + look.glow[c] * glow
+                });
+            }
+        }
+    }
+
+    fn stars(&mut self, rng: &mut Lcg) {
+        let count = 300 + (rng.unit() * 300.0) as usize;
+        for _ in 0..count {
+            let x = (rng.unit() * self.width as f32) as i64;
+            let y = (rng.unit() * self.height as f32) as i64;
+            let brightness = rng.unit().powi(3);
+            let tint = rng.unit();
+            let color = [235.0 + 20.0 * tint, 235.0, 255.0 - 30.0 * tint];
+            self.add(x, y, color, 0.25 + 0.75 * brightness);
+            if brightness > 0.6 {
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    self.add(x + dx, y + dy, color, 0.35 * brightness);
+                }
+            }
+        }
+    }
+
+    /// A shaded disc lit from `light`, with bands, a bright limb and a thin atmosphere.
+    fn planet(
+        &mut self,
+        look: &Look,
+        centre: (f32, f32),
+        radius: f32,
+        light: [f32; 3],
+        phase: f32,
+    ) {
+        let halo = radius * 1.06;
+        let x0 = (centre.0 - halo).floor().max(0.0) as usize;
+        let x1 = ((centre.0 + halo).ceil() as usize).min(self.width);
+        let y0 = (centre.1 - halo).floor().max(0.0) as usize;
+        let y1 = ((centre.1 + halo).ceil() as usize).min(self.height);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let (dx, dy) = (
+                    (x as f32 - centre.0) / radius,
+                    (y as f32 - centre.1) / radius,
+                );
+                let d = (dx * dx + dy * dy).sqrt();
+                let facing = (dx * light[0] + dy * light[1]) / d.max(1e-3);
+                let pixel = &mut self.pixels[y * self.width + x];
+                if d >= 1.0 {
+                    let air = (1.0 - (d - 1.0) / 0.06).max(0.0).powi(2) * facing.max(0.0) * 0.5;
+                    for (value, light) in pixel.iter_mut().zip(look.light) {
+                        *value += light * air * 0.6;
+                    }
+                    continue;
+                }
+                let nz = (1.0 - d * d).sqrt();
+                let lit = (dx * light[0] + dy * light[1] + nz * light[2]).max(0.0);
+                let bands = 0.5 + 0.5 * (dy * 9.0 + (dx * 3.0 + phase).sin() * 0.8).sin();
+                let limb = (1.0 - nz).powi(3) * lit;
+                let edge = ((1.0 - d) * radius).clamp(0.0, 1.0);
+                let old = *pixel;
+                *pixel = std::array::from_fn(|c| {
+                    let base = look.body[c] + (look.band[c] - look.body[c]) * bands;
+                    let glare = limb * 0.7 + lit.powi(12) * 0.12;
+                    let shaded = base * (0.03 + 0.97 * lit) + look.light[c] * glare;
+                    old[c] * (1.0 - edge) + shaded * edge
+                });
+            }
+        }
+    }
+
+    /// Saves with a little film grain at high quality, so files weigh what real captures do.
+    fn save(self, path: &Path, rng: &mut Lcg) {
+        let bytes: Vec<u8> = self
+            .pixels
+            .iter()
+            .flat_map(|pixel| {
+                let grain = rng.between(-5.0, 5.0);
+                pixel.map(|value| (value + grain).clamp(0.0, 255.0) as u8)
+            })
+            .collect();
+        let picture =
+            image::RgbImage::from_raw(self.width as u32, self.height as u32, bytes).unwrap();
+        let file = fs::File::create(path).unwrap();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(std::io::BufWriter::new(file), 92)
+            .encode_image(&picture)
+            .unwrap();
+    }
+}
+
+/// Writes a made-up space scene as a JPEG: a dark sky with a soft glow, a few hundred
+/// stars, and a lit planet or a horizon, with a palette picked by `seed`. The same seed
+/// always gives the same picture.
+pub fn space_scene(path: &Path, width: u32, height: u32, seed: u64) {
+    let look = &LOOKS[(seed % LOOKS.len() as u64) as usize];
+    let mut rng = Lcg(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+    let mut canvas = Canvas {
+        width: width as usize,
+        height: height as usize,
+        pixels: vec![[0.0; 3]; width as usize * height as usize],
+    };
+    canvas.sky(look, &mut rng);
+    canvas.stars(&mut rng);
+    let (w, h) = (width as f32, height as f32);
+    let from_left = rng.unit() < 0.5;
+    let light_x = if from_left { -0.62 } else { 0.62 };
+    let light = [light_x, -0.45, 0.64];
+    let phase = rng.between(0.0, 6.0);
+    if seed % 3 == 2 {
+        let radius = w * 1.5;
+        let centre = (w * rng.between(0.35, 0.65), h + radius * 0.84);
+        canvas.planet(look, centre, radius, light, phase);
+    } else {
+        let side = if from_left {
+            rng.between(0.58, 0.8)
+        } else {
+            rng.between(0.2, 0.42)
+        };
+        let radius = h * rng.between(0.22, 0.4);
+        canvas.planet(
+            look,
+            (w * side, h * rng.between(0.5, 0.72)),
+            radius,
+            light,
+            phase,
+        );
+    }
+    if rng.unit() < 0.6 {
+        let moon = h * rng.between(0.03, 0.06);
+        let centre = (w * rng.between(0.1, 0.9), h * rng.between(0.12, 0.3));
+        canvas.planet(
+            &LOOKS[(seed as usize + 2) % LOOKS.len()],
+            centre,
+            moon,
+            light,
+            phase,
+        );
+    }
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).unwrap();
+    }
+    canvas.save(path, &mut rng);
+}

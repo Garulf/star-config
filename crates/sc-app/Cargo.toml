@@ -16,6 +16,8 @@ tokio.workspace = true
 rfd.workspace = true
 arboard.workspace = true
 open.workspace = true
+image.workspace = true
+directories.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]

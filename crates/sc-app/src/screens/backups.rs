@@ -1,5 +1,5 @@
 mod files;
-mod when;
+pub(super) mod when;
 
 pub use files::{CLOSE_GAME, DiffView, FileRow, FileState, restore, words};
 

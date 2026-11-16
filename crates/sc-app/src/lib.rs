@@ -1,7 +1,5 @@
 extern crate self as sc_app;
 
-use arboard as _;
-
 pub mod app;
 pub mod context;
 pub mod icons;

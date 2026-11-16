@@ -562,10 +562,7 @@ impl App {
                 Task::none()
             }
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
-            Message::Input(event) => match self.screen {
-                Screen::Keybinds => self.update(Message::Keybinds(keybinds::Message::Input(event))),
-                _ => Task::none(),
-            },
+            Message::Input(event) => self.input(event),
             Message::Overview(m) => {
                 let a = self.screens.overview.update(m, &self.ctx);
                 self.handle(a.map(Message::Overview))
@@ -632,6 +629,31 @@ impl App {
             }
             Shortcut::Find => operation::focus(SEARCH_ID),
             Shortcut::Apply | Shortcut::Escape | Shortcut::Enter => Task::none(),
+        }
+    }
+
+    fn input(&mut self, event: Event) -> Task<Message> {
+        if !self.wants_input() {
+            return Task::none();
+        }
+        match self.screen {
+            Screen::Keybinds => self.update(Message::Keybinds(keybinds::Message::Input(event))),
+            Screen::Screenshots => self.viewer_input(event),
+            _ => Task::none(),
+        }
+    }
+
+    /// The screenshot viewer takes the arrow keys and Escape, and every other shortcut still works.
+    fn viewer_input(&mut self, event: Event) -> Task<Message> {
+        let shell_shortcut = match &event {
+            Event::Keyboard(key_event) => shortcut(key_event),
+            _ => None,
+        };
+        match shell_shortcut {
+            Some(Shortcut::Escape | Shortcut::Enter) | None => {
+                self.update(Message::Screenshots(screenshots::Message::Input(event)))
+            }
+            Some(other) => self.shortcut(other),
         }
     }
 
@@ -723,12 +745,12 @@ impl App {
         )
     }
 
-    /// Whether the active screen is capturing keys and mouse buttons, which also turns the
-    /// shell's own shortcuts off.
+    /// Whether the active screen is taking raw keys and mouse buttons.
     pub fn wants_input(&self) -> bool {
         self.dialog.is_none()
             && match self.screen {
                 Screen::Keybinds => self.screens.keybinds.wants_input(),
+                Screen::Screenshots => self.screens.screenshots.wants_input(),
                 _ => false,
             }
     }

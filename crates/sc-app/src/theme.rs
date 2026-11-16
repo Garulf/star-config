@@ -73,6 +73,13 @@ pub mod layout {
     pub const VIRTUAL_FALLBACK_HEIGHT: f32 = 2400.0;
     pub const DIFF_ROW_HEIGHT: f32 = 22.0;
     pub const DIFF_SIGN_WIDTH: f32 = 16.0;
+    pub const SHOT_TILE_MIN_WIDTH: f32 = 220.0;
+    pub const SHOT_TILE_ASPECT: f32 = 9.0 / 16.0;
+    pub const SHOT_TILE_RING: f32 = 2.0;
+    pub const SHOT_HEADING_HEIGHT: f32 = 44.0;
+    pub const SHOT_PERIOD_WIDTH: f32 = 150.0;
+    pub const SHOT_INFO_WIDTH: f32 = 320.0;
+    pub const SHOT_DETAIL_LABEL_WIDTH: f32 = 84.0;
 }
 
 const BORDER_WIDTH: f32 = 1.0;
@@ -993,6 +1000,91 @@ pub fn capture_box(listening: bool) -> impl Fn(&Theme) -> container::Style {
             border: outline(edge, radius::MD),
             ..container::Style::default()
         }
+    }
+}
+
+// Screenshots. Overlays sit on pictures, so they keep dark colours in both themes.
+
+const IMAGE_STAGE: Color = Color::from_rgb8(0x07, 0x09, 0x0C);
+const OVERLAY_ALPHA: f32 = 0.72;
+
+pub fn shot_tile(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = tokens(theme);
+        let ring = match (selected, status) {
+            (true, _) => p.accent,
+            (false, button::Status::Hovered) => mix(p.border, p.text_muted, 0.6),
+            (false, _) => p.border,
+        };
+        button::Style {
+            background: Some(p.surface.into()),
+            text_color: p.text,
+            border: Border {
+                color: ring,
+                width: if selected {
+                    layout::SHOT_TILE_RING
+                } else {
+                    BORDER_WIDTH
+                },
+                radius: radius::SM.into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+pub fn shot_placeholder(theme: &Theme) -> container::Style {
+    let p = tokens(theme);
+    container::Style {
+        text_color: Some(p.text_muted),
+        background: Some(p.surface.into()),
+        ..container::Style::default()
+    }
+}
+
+pub fn shot_strip(_theme: &Theme) -> container::Style {
+    container::Style {
+        text_color: Some(DARK.text),
+        background: Some(
+            Color {
+                a: OVERLAY_ALPHA,
+                ..IMAGE_STAGE
+            }
+            .into(),
+        ),
+        ..container::Style::default()
+    }
+}
+
+pub fn shot_chip(_theme: &Theme) -> container::Style {
+    container::Style {
+        text_color: Some(DARK.text),
+        background: Some(
+            Color {
+                a: OVERLAY_ALPHA,
+                ..IMAGE_STAGE
+            }
+            .into(),
+        ),
+        border: border::rounded(radius::SM),
+        ..container::Style::default()
+    }
+}
+
+pub fn on_image(_theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(DARK.text),
+    }
+}
+
+pub fn image_stage(theme: &Theme) -> container::Style {
+    let p = tokens(theme);
+    container::Style {
+        text_color: Some(DARK.text_muted),
+        background: Some(IMAGE_STAGE.into()),
+        border: outline(mix(IMAGE_STAGE, p.border, 0.5), radius::MD),
+        ..container::Style::default()
     }
 }
 
