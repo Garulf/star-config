@@ -190,10 +190,15 @@ impl State {
             return Task::none();
         };
         if self.install_root.as_ref() != Some(&install.root) {
+            self.stop_copy();
+            let copy = std::mem::replace(&mut self.copy, CopyStage::Idle);
             *self = Self {
                 next_run: self.next_run,
                 ..Self::new()
             };
+            if matches!(copy, CopyStage::Running(_)) {
+                self.copy = copy;
+            }
             self.install_root = Some(install.root.clone());
         }
         self.sizes = None;

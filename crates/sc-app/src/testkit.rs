@@ -971,3 +971,12 @@ pub fn demo_screenshots(ctx: &Context) -> Vec<PathBuf> {
         })
         .collect()
 }
+
+/// The demo prefix with the given channels, also listed in `settings.installs` the way a
+/// folder the user picked is, so a rescan finds it again as it does after a real start.
+pub fn context_like_startup(temp: &Path, channels: &[&str]) -> Context {
+    let mut ctx = context_with_channels(temp, channels);
+    let root = ctx.install.as_ref().unwrap().root.clone();
+    ctx.settings.installs.push(root);
+    ctx
+}

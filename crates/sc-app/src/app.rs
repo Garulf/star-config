@@ -77,8 +77,10 @@ pub enum Message {
     FolderChecked(Option<Install>),
     Rescan,
     Rescanned(Vec<Install>),
+    UseInstall(Option<Install>),
     Launch,
     ApplyAndLaunch,
+    LaunchIfApplied,
     LaunchUnchecked,
     LaunchConfirmed(String),
     Launched(Result<(), String>),
@@ -278,11 +280,44 @@ impl App {
     }
 
     fn apply_active(&mut self) -> Task<Message> {
+        self.apply_screen(self.screen)
+    }
+
+    fn apply_screen(&mut self, screen: Screen) -> Task<Message> {
         let ctx = &self.ctx;
-        let action = on_screen!(self.screen, [&mut self.screens], |state, wrap| state
+        let action = on_screen!(screen, [&mut self.screens], |state, wrap| state
             .apply(ctx)
             .map(wrap));
         self.handle(action)
+    }
+
+    /// Applies every screen that has unsaved changes.
+    fn apply_all(&mut self) -> Task<Message> {
+        let screens: Vec<Screen> = Screen::ALL
+            .into_iter()
+            .filter(|screen| self.pending(*screen) > 0)
+            .collect();
+        let tasks: Vec<Task<Message>> = screens
+            .into_iter()
+            .map(|screen| self.apply_screen(screen))
+            .collect();
+        Task::batch(tasks)
+    }
+
+    /// Which screens have unsaved changes, as one sentence.
+    fn pending_text(&self) -> String {
+        let parts: Vec<String> = Screen::ALL
+            .into_iter()
+            .filter_map(|screen| {
+                let count = self.pending(screen);
+                (count > 0).then(|| format!("{} has {}", screen.label(), unsaved_text(count)))
+            })
+            .collect();
+        match parts.split_last() {
+            Some((last, [])) => format!("{last}."),
+            Some((last, rest)) => format!("{} and {last}.", rest.join(", ")),
+            None => String::new(),
+        }
     }
 
     fn handle(&mut self, action: Action<Message>) -> Task<Message> {
@@ -444,20 +479,22 @@ impl App {
                 Self::load_install(Some(install))
             }
             Message::Rescan => self.rescan(),
-            Message::Rescanned(installs) => {
-                let keep = self
-                    .ctx
-                    .install
-                    .clone()
-                    .filter(|current| installs.contains(current))
-                    .or_else(|| installs.first().cloned());
-                self.ctx.installs = installs;
-                Self::load_install(keep)
+            Message::Rescanned(installs) => self.rescanned(installs),
+            Message::UseInstall(install) => {
+                self.discard_all();
+                Self::load_install(install)
             }
             Message::Launch => self.launch_pressed(),
             Message::ApplyAndLaunch => {
-                let applied = self.apply_active();
-                applied.chain(Task::done(Message::LaunchUnchecked))
+                let applied = self.apply_all();
+                applied.chain(Task::done(Message::LaunchIfApplied))
+            }
+            Message::LaunchIfApplied => {
+                if self.total_pending() == 0 {
+                    self.launch_checked()
+                } else {
+                    Task::none()
+                }
             }
             Message::LaunchUnchecked => self.launch_checked(),
             Message::LaunchConfirmed(described) => {
@@ -707,15 +744,31 @@ impl App {
         }
     }
 
+    /// Keeps the selected install when the rescan still finds it, under any spelling of its
+    /// folder. Otherwise switching to another install asks first, as picking one does.
+    fn rescanned(&mut self, mut installs: Vec<Install>) -> Task<Message> {
+        let current = self.ctx.install.clone();
+        let found = current.as_ref().and_then(|current| {
+            let key = current.key();
+            installs.iter().position(|install| install.key() == key)
+        });
+        if let (Some(current), Some(index)) = (current, found) {
+            installs[index] = current.clone();
+            self.ctx.installs = installs;
+            return Self::load_install(Some(current));
+        }
+        let next = installs.first().cloned();
+        self.ctx.installs = installs;
+        self.confirm_discard(Message::UseInstall(next))
+    }
+
     fn launch_pressed(&mut self) -> Task<Message> {
-        let pending = self.pending(self.screen);
-        if pending == 0 {
+        if self.total_pending() == 0 {
             return self.launch_checked();
         }
         let body = format!(
-            "{} has {}. Apply them before the game reads its files?",
-            self.screen.label(),
-            unsaved_text(pending)
+            "{} Apply them before the game reads its files?",
+            self.pending_text()
         );
         self.dialog = Some(
             Confirm::new("Apply changes first?", body)

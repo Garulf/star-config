@@ -6,9 +6,10 @@ use iced_test::selector::Candidate;
 use iced_test::simulator::Simulator;
 use sc_app::app::{self, App, Message, Shortcut};
 use sc_app::screen::{Screen, Toast};
-use sc_app::screens::settings;
+use sc_app::screens::{config, settings};
 use sc_app::theme;
 use sc_core::backup::SnapshotId;
+use sc_core::install::Install;
 use sc_core::process::RunState;
 use sc_core::settings::ThemeChoice;
 use testkit::{ctrl, feed};
@@ -264,4 +265,120 @@ fn snapshot_states() {
         ));
         shot(&app, FULL, &format!("no-install-{name}"));
     }
+}
+
+fn stage_fov(app: &mut App) {
+    feed(app, [Message::Navigate(Screen::Config)]);
+    feed(
+        app,
+        [Message::Config(config::Message::SetCvar(
+            "cl_fov".into(),
+            "100".into(),
+        ))],
+    );
+    assert_eq!(app.pending(Screen::Config), 1);
+}
+
+#[test]
+fn launch_asks_about_edits_on_any_screen_and_never_launches_after_a_failed_apply() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_with_wine_script(temp.path());
+    let cfg = ctx.channel.as_ref().unwrap().user_cfg();
+    std::fs::write(&cfg, "cl_fov = 90\n").unwrap();
+    let mut app = App::with(ctx);
+    stage_fov(&mut app);
+    feed(&mut app, [Message::Navigate(Screen::Keybinds)]);
+    feed(&mut app, [Message::Launch]);
+    let dialog = app.dialog().expect("asks first");
+    assert_eq!(dialog.title, "Apply changes first?");
+    assert_eq!(
+        dialog.body,
+        "Config has 1 unsaved change. Apply them before the game reads its files?"
+    );
+
+    feed(
+        &mut app,
+        [
+            Message::Probed(RunState::Running, RunState::NotRunning),
+            Message::DialogAction(0),
+        ],
+    );
+    assert!(app.dialog().is_none(), "the launcher was not started");
+    assert_eq!(app.pending(Screen::Config), 1);
+    assert_eq!(std::fs::read_to_string(&cfg).unwrap(), "cl_fov = 90\n");
+
+    feed(
+        &mut app,
+        [
+            Message::Probed(RunState::NotRunning, RunState::NotRunning),
+            Message::Launch,
+            Message::DialogAction(0),
+        ],
+    );
+    assert_eq!(std::fs::read_to_string(&cfg).unwrap(), "cl_fov = 100\n");
+    assert_eq!(app.pending(Screen::Config), 0);
+    assert_eq!(app.dialog().expect("launches").title, "Start the launcher?");
+}
+
+#[test]
+fn rescan_keeps_the_install_and_staged_edits() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_like_startup(temp.path(), &["LIVE"]);
+    let root = ctx.install.as_ref().unwrap().root.clone();
+    std::fs::write(ctx.channel.as_ref().unwrap().user_cfg(), "cl_fov = 90\n").unwrap();
+    let mut app = App::with(ctx);
+    stage_fov(&mut app);
+    feed(&mut app, [Message::Rescan]);
+    assert_eq!(app.context().install.as_ref().unwrap().root, root);
+    assert_eq!(app.pending(Screen::Config), 1);
+    assert!(app.dialog().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn rescan_keeps_an_install_reached_through_a_symlink() {
+    let temp = tempfile::tempdir().unwrap();
+    let real = testkit::make_install(&temp.path().join("real"), &["LIVE"]);
+    let link = temp.path().join("link");
+    std::os::unix::fs::symlink(temp.path().join("real"), &link).unwrap();
+    let install = Install::from_dir(&link).unwrap();
+    let linked = install.root.clone();
+    let mut ctx = testkit::context_for(temp.path(), vec![install]);
+    ctx.settings.installs = vec![real, link];
+    std::fs::write(ctx.channel.as_ref().unwrap().user_cfg(), "cl_fov = 90\n").unwrap();
+    let mut app = App::with(ctx);
+    stage_fov(&mut app);
+    feed(&mut app, [Message::Rescan]);
+    assert_eq!(app.context().install.as_ref().unwrap().root, linked);
+    assert_eq!(app.pending(Screen::Config), 1);
+    assert!(app.dialog().is_none());
+}
+
+#[test]
+fn removing_the_selected_install_asks_before_dropping_edits() {
+    let temp = tempfile::tempdir().unwrap();
+    let a = testkit::make_install(&temp.path().join("a"), &["LIVE"]);
+    let b = testkit::make_install(&temp.path().join("b"), &["LIVE"]);
+    let installs = vec![
+        Install::from_dir(&a).unwrap(),
+        Install::from_dir(&b).unwrap(),
+    ];
+    let mut ctx = testkit::context_for(temp.path(), installs);
+    ctx.settings.installs = vec![a.clone(), b.clone()];
+    std::fs::write(ctx.channel.as_ref().unwrap().user_cfg(), "cl_fov = 90\n").unwrap();
+    let mut app = App::with(ctx);
+    stage_fov(&mut app);
+    feed(
+        &mut app,
+        [Message::Settings(settings::Message::RemoveFolder(
+            a.clone(),
+        ))],
+    );
+    let dialog = app.dialog().expect("asks first");
+    assert_eq!(dialog.title, "Discard unsaved changes?");
+    assert_eq!(app.context().install.as_ref().unwrap().root, a);
+    assert_eq!(app.pending(Screen::Config), 1);
+    feed(&mut app, [Message::DialogAction(0)]);
+    assert_eq!(app.context().install.as_ref().unwrap().root, b);
+    assert_eq!(app.pending(Screen::Config), 0);
 }
