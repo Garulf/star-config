@@ -2,8 +2,8 @@
 
 use crate::backup::{Scope, SnapshotInfo};
 use crate::error::{Error, Result};
-use crate::guard::{Change, Writer};
-use crate::install::{Channel, Install, resolve_ci, resolve_ci_or_default};
+use crate::guard::{Change, Target, Writer};
+use crate::install::{Channel, Install, canonical_or_raw, resolve_ci, resolve_ci_or_default};
 use crate::process::{GameProbe, RunState};
 use crate::safe_write::{self, LoadedFile, check_writable, write_atomic};
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,13 @@ const SWAP_DIR: &str = ".star-config-swap";
 const SWAP_SUFFIX: &str = ".star-config-swap";
 const DATA: &str = "data";
 const LOCALIZATION: &str = "Localization";
+const SESSION_FILES: [&str; 5] = [
+    "Game.log",
+    "logbackups",
+    "logs",
+    "Crashes",
+    "loginData.json",
+];
 
 // classification and validation
 
@@ -59,6 +66,18 @@ pub fn is_user_path(rel: &Path) -> bool {
         [first, second, ..] => is_named(first, DATA) && is_named(second, LOCALIZATION),
         _ => false,
     }
+}
+
+/// Logs, crash dumps and the login session belong to the channel that wrote them, so a game file
+/// copy leaves the target's own. A swap renames whole folders, so they travel with their folder.
+fn is_session_path(rel: &Path) -> bool {
+    normal_parts(rel)
+        .and_then(|parts| parts.first().copied())
+        .is_some_and(|first| SESSION_FILES.iter().any(|name| is_named(first, name)))
+}
+
+fn is_game_file_path(rel: &Path) -> bool {
+    !is_user_path(rel) && !is_session_path(rel)
 }
 
 fn same_name(a: &str, b: &str) -> bool {
@@ -240,7 +259,7 @@ fn source_files(source: &Path) -> Result<Vec<(PathBuf, fs::Metadata)>> {
         .into_iter()
         .filter_entry(|entry| {
             let rel = entry.path().strip_prefix(source).unwrap_or(Path::new(""));
-            !is_user_path(rel)
+            rel.as_os_str().is_empty() || is_game_file_path(rel)
         });
     let mut files = Vec::new();
     for entry in walk {
@@ -301,11 +320,45 @@ fn free_space(path: &Path) -> Option<u64> {
     let real = fs::canonicalize(existing).ok()?;
     let disks =
         Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage()).ok()?;
-    disks
+    let mounts: Vec<(String, u64)> = disks
         .iter()
-        .filter(|disk| real.starts_with(disk.mount_point()))
-        .max_by_key(|disk| disk.mount_point().components().count())
-        .map(|disk| disk.available_space())
+        .map(|disk| {
+            let mount = disk.mount_point().to_string_lossy().into_owned();
+            (mount, disk.available_space())
+        })
+        .collect();
+    free_on_mount(&real.to_string_lossy(), &mounts, cfg!(windows))
+}
+
+/// Path parts for mount matching. On Windows, `canonicalize` returns verbatim paths
+/// (`\\?\C:\x`, `\\?\UNC\server\share`) while mount points are plain (`C:\`).
+fn mount_parts(path: &str, windows: bool) -> Vec<String> {
+    if !windows {
+        return path
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .map(str::to_string)
+            .collect();
+    }
+    let plain = match path.strip_prefix(r"\\?\UNC\") {
+        Some(rest) => format!(r"\\{rest}"),
+        None => path.strip_prefix(r"\\?\").unwrap_or(path).to_string(),
+    };
+    plain
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+fn free_on_mount(path: &str, mounts: &[(String, u64)], windows: bool) -> Option<u64> {
+    let parts = mount_parts(path, windows);
+    mounts
+        .iter()
+        .map(|(mount, free)| (mount_parts(mount, windows), *free))
+        .filter(|(mount, _)| parts.starts_with(mount))
+        .max_by_key(|(mount, _)| mount.len())
+        .map(|(_, free)| free)
 }
 
 fn space_needs_in_place(bytes_to_copy: u64, replaced: u64, free: Option<u64>) -> Result<bool> {
@@ -430,7 +483,7 @@ fn prepare_jobs(plan: &CopyPlan) -> Result<Vec<Job>> {
     let mut jobs = Vec::new();
     for planned in plan.files.iter().filter(|file| file.copy) {
         let plain = normal_parts(&planned.rel).is_some_and(|parts| !parts.is_empty());
-        if !plain || is_user_path(&planned.rel) {
+        if !plain || !is_game_file_path(&planned.rel) {
             return Err(invalid_plan(
                 plan,
                 &format!("{} is not a game file path", planned.rel.display()),
@@ -703,6 +756,9 @@ pub struct SwapJournal {
     pub b: String,
     pub steps: Vec<Step>,
     pub done: usize,
+    /// The identity of the entry each step moves, taken before the first rename.
+    #[serde(default)]
+    pub ids: Vec<Option<EntryId>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -886,6 +942,7 @@ pub fn plan_swap(
         b: name(&dir_b),
         steps,
         done: 0,
+        ids: Vec::new(),
     })
 }
 
@@ -902,7 +959,8 @@ fn check_journal(journal: &SwapJournal) -> Result<()> {
         .steps
         .iter()
         .all(|Step::Rename { from, to }| inside_root(root, from) && inside_root(root, to));
-    if !root.is_absolute() || !steps_inside || journal.done > journal.steps.len() {
+    let ids_fit = journal.ids.is_empty() || journal.ids.len() == journal.steps.len();
+    if !root.is_absolute() || !steps_inside || !ids_fit || journal.done > journal.steps.len() {
         return Err(Error::Invalid(format!(
             "the swap journal for {} is not valid",
             root.display()
@@ -918,7 +976,11 @@ fn move_entry(from: &Path, to: &Path) -> Result<()> {
             io::Error::new(ErrorKind::AlreadyExists, "already exists"),
         ));
     }
-    fs::rename(from, to).map_err(|err| Error::io(from, err))
+    fs::rename(from, to).map_err(|err| Error::io(from, err))?;
+    for dir in [from.parent(), to.parent()].into_iter().flatten() {
+        safe_write::sync_dir(dir);
+    }
+    Ok(())
 }
 
 fn save(journal: &SwapJournal, file: &Path) -> Result<()> {
@@ -965,12 +1027,104 @@ fn undo(journal: &mut SwapJournal, file: &Path, mover: &mut Mover) -> Result<()>
     Ok(())
 }
 
-fn catch_up(journal: &mut SwapJournal) {
-    if let Some(step) = journal.steps.get(journal.done) {
-        let (from, to) = step_paths(step);
-        if exists_no_follow(to) && !exists_no_follow(from) {
-            journal.done += 1;
+/// Tells one moved entry from another across renames: device and inode on Unix, creation time on
+/// Windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntryId(u64, u64);
+
+#[cfg(unix)]
+fn entry_id(path: &Path) -> Option<EntryId> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::symlink_metadata(path).ok()?;
+    Some(EntryId(meta.dev(), meta.ino()))
+}
+
+#[cfg(windows)]
+fn entry_id(path: &Path) -> Option<EntryId> {
+    use std::os::windows::fs::MetadataExt;
+    let meta = fs::symlink_metadata(path).ok()?;
+    Some(EntryId(meta.creation_time(), 0))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn entry_id(_path: &Path) -> Option<EntryId> {
+    None
+}
+
+fn moved_by(path: &Path, from: &Path, to: &Path) -> PathBuf {
+    match path.strip_prefix(from) {
+        Ok(rest) if rest.as_os_str().is_empty() => to.to_path_buf(),
+        Ok(rest) => to.join(rest),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+/// Where the entry at `path` after `steps[..from_state]` ran sits after `steps[..to_state]` ran.
+fn follow(steps: &[Step], path: &Path, from_state: usize, to_state: usize) -> PathBuf {
+    if from_state <= to_state {
+        steps[from_state..to_state]
+            .iter()
+            .fold(path.to_path_buf(), |path, step| {
+                let (from, to) = step_paths(step);
+                moved_by(&path, from, to)
+            })
+    } else {
+        steps[to_state..from_state]
+            .iter()
+            .rev()
+            .fold(path.to_path_buf(), |path, step| {
+                let (from, to) = step_paths(step);
+                moved_by(&path, to, from)
+            })
+    }
+}
+
+/// Where the entry that step `index` moves sits once `state` steps have run.
+fn location_of(steps: &[Step], index: usize, state: usize) -> PathBuf {
+    let (from, to) = step_paths(&steps[index]);
+    if index < state {
+        follow(steps, to, index + 1, state)
+    } else {
+        follow(steps, from, index, state)
+    }
+}
+
+fn record_ids(journal: &mut SwapJournal) {
+    journal.ids = (0..journal.steps.len())
+        .map(|index| entry_id(&location_of(&journal.steps, index, 0)))
+        .collect();
+}
+
+fn disk_is_at(journal: &SwapJournal, state: usize) -> bool {
+    let steps = &journal.steps;
+    let next_free = steps
+        .get(state)
+        .is_none_or(|step| !exists_no_follow(step_paths(step).1));
+    next_free
+        && (0..steps.len()).all(|index| {
+            let at = location_of(steps, index, state);
+            match journal.ids.get(index).copied().flatten() {
+                Some(id) => entry_id(&at) == Some(id),
+                None => exists_no_follow(&at),
+            }
+        })
+}
+
+/// Sets `done` to the number of steps the disk shows, which can be more or fewer than recorded.
+fn catch_up(journal: &mut SwapJournal, journal_file: &Path) -> Result<()> {
+    let recorded = journal.done;
+    let mut states: Vec<usize> = (0..=journal.steps.len()).collect();
+    states.sort_by_key(|state| state.abs_diff(recorded));
+    match states.into_iter().find(|state| disk_is_at(journal, *state)) {
+        Some(state) => {
+            journal.done = state;
+            Ok(())
         }
+        None => Err(Error::Invalid(format!(
+            "the folders in {} match no point of the swap recorded in {}; put them back by hand",
+            journal.install_root.display(),
+            journal_file.display()
+        ))),
     }
 }
 
@@ -998,6 +1152,8 @@ fn run_swap_with(
         )));
     }
     require_closed(probe)?;
+    check_writable(&journal.install_root)?;
+    record_ids(&mut journal);
     save(&journal, journal_file)?;
     if let Err(first) = redo(&mut journal, journal_file, mover) {
         if undo(&mut journal, journal_file, mover).is_ok() {
@@ -1024,6 +1180,42 @@ pub fn pending_swap(journal_file: &Path) -> Result<Option<SwapJournal>> {
     Ok(Some(journal))
 }
 
+/// Finds a pending swap for `install` in `journal_dir`, also one written under another spelling
+/// of the install's path. Returns the journal file and its contents.
+pub fn find_pending_swap(
+    journal_dir: &Path,
+    install: &Install,
+) -> Result<Option<(PathBuf, SwapJournal)>> {
+    let own = journal_path(journal_dir, install);
+    if let Some(journal) = pending_swap(&own)? {
+        return Ok(Some((own, journal)));
+    }
+    let entries = match fs::read_dir(journal_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(Error::io(journal_dir, err)),
+    };
+    let root = canonical_or_raw(&install.root);
+    let mut names: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| name.starts_with("swap-") && name.ends_with(".json"))
+        })
+        .collect();
+    names.sort();
+    for file in names {
+        if let Ok(Some(journal)) = pending_swap(&file)
+            && canonical_or_raw(&journal.install_root) == root
+        {
+            return Ok(Some((file, journal)));
+        }
+    }
+    Ok(None)
+}
+
 pub fn resume_swap(
     mut journal: SwapJournal,
     journal_file: &Path,
@@ -1032,7 +1224,7 @@ pub fn resume_swap(
 ) -> Result<()> {
     require_closed(probe)?;
     check_journal(&journal)?;
-    catch_up(&mut journal);
+    catch_up(&mut journal, journal_file)?;
     let mover: &mut Mover = &mut move_entry;
     match how {
         Resume::Finish => redo(&mut journal, journal_file, mover)?,
@@ -1200,26 +1392,28 @@ pub fn swap_settings(
             new_bytes: other_side(in_a),
         })
         .collect();
-    let first = writer.apply(
-        scope_a,
-        a,
-        &changes_a,
-        &format!("Swap settings with {}", b.name),
-    )?;
-    match writer.apply(
-        scope_b,
-        b,
-        &changes_b,
-        &format!("Swap settings with {}", a.name),
-    ) {
-        Ok(second) => Ok((first, second)),
-        Err(err) => match writer.store().restore(scope_a, a, &first.id) {
-            Ok(_) => Err(err),
-            Err(restore_err) => Err(Error::Invalid(format!(
-                "{err}; restoring {} from snapshot {} also failed: {restore_err}",
-                a.name, first.id.0
-            ))),
+    let label_a = format!("Swap settings with {}", b.name);
+    let label_b = format!("Swap settings with {}", a.name);
+    let done = writer.apply_all(&[
+        Target {
+            scope: scope_a,
+            channel: a,
+            changes: &changes_a,
+            label: &label_a,
         },
+        Target {
+            scope: scope_b,
+            channel: b,
+            changes: &changes_b,
+            label: &label_b,
+        },
+    ])?;
+    let mut done = done.into_iter();
+    match (done.next(), done.next()) {
+        (Some(first), Some(second)) => Ok((first, second)),
+        _ => Err(Error::Invalid(
+            "the settings swap returned too few snapshots".into(),
+        )),
     }
 }
 
@@ -1588,6 +1782,30 @@ mod tests {
     }
 
     #[test]
+    fn free_space_matches_verbatim_and_unc_paths_to_plain_mounts() {
+        let windows = [
+            (r"C:\".to_string(), 10),
+            (r"D:\".to_string(), 20),
+            (r"\\server\share\".to_string(), 30),
+            (r"D:\mnt\games\".to_string(), 40),
+        ];
+        let free = |path: &str| free_on_mount(path, &windows, true);
+        assert_eq!(free(r"\\?\C:\Program Files\x"), Some(10));
+        assert_eq!(free(r"\\?\c:\x"), Some(10));
+        assert_eq!(free(r"\\?\UNC\server\share\games\sc"), Some(30));
+        assert_eq!(free(r"\\?\D:\mnt\games\sc"), Some(40));
+        assert_eq!(free(r"\\?\D:\mnt\gamesx"), Some(20));
+        assert_eq!(free(r"\\?\E:\x"), None);
+        let unix = [
+            ("/".to_string(), 1),
+            ("/mnt/games".to_string(), 2),
+            ("/mnt/g".to_string(), 3),
+        ];
+        assert_eq!(free_on_mount("/mnt/games/sc", &unix, false), Some(2));
+        assert_eq!(free_on_mount("/home/x", &unix, false), Some(1));
+    }
+
+    #[test]
     fn space_check_flags_in_place_and_refuses_copies_that_cannot_fit() {
         assert!(!space_needs_in_place(100, 0, None).unwrap());
         assert!(!space_needs_in_place(100, 0, Some(100)).unwrap());
@@ -1653,6 +1871,29 @@ mod tests {
         let after = fx.tree();
         assert_eq!(user_entries_of(&after, "PTU"), before);
         assert!(no_part_files(&after));
+    }
+
+    #[test]
+    fn copy_keeps_the_target_session_files() {
+        let fx = fixture();
+        let session = [
+            "Game.log",
+            "logbackups/Game-old.log",
+            "Crashes/dump.dmp",
+            "logs/x.log",
+            "loginData.json",
+        ];
+        for rel in session {
+            fx.write(&format!("LIVE/{rel}"), &content("LIVE", rel));
+            fx.write(&format!("PTU/{rel}"), &content("PTU", rel));
+        }
+        let plan = plan_copy(&fx.install, "LIVE", "PTU", CopyOptions::default()).unwrap();
+        let planned: Vec<String> = plan.files.iter().map(|f| rel_text(&f.rel)).collect();
+        assert_eq!(planned, ["Bin64/StarCitizen.exe", "Data.p4k"]);
+        copy(&fx, "LIVE", "PTU", CopyOptions::default());
+        for rel in session {
+            assert_eq!(fx.read(&format!("PTU/{rel}")), content("PTU", rel), "{rel}");
+        }
     }
 
     #[test]
@@ -1955,6 +2196,7 @@ mod tests {
 
     fn interrupt(fx: &Fx, layout: Layout, applied: usize, recorded: usize) -> SwapJournal {
         let mut journal = plan(fx, layout);
+        record_ids(&mut journal);
         for Step::Rename { from, to } in &journal.steps[..applied] {
             fs::rename(from, to).unwrap();
         }
@@ -2242,6 +2484,91 @@ mod tests {
     }
 
     #[test]
+    fn resume_when_journal_is_ahead_of_the_disk() {
+        for layout in LAYOUTS {
+            let expected = clean_swap(layout);
+            let steps = plan(&(layout.build)(), layout).steps.len();
+            for ahead in [1, 2] {
+                for recorded in ahead..=steps {
+                    let applied = recorded - ahead;
+                    let fx = (layout.build)();
+                    let journal = interrupt(&fx, layout, applied, recorded);
+                    resume_swap(journal, &fx.journal(), Resume::Finish, &CLOSED).unwrap();
+                    assert_eq!(fx.tree(), expected, "finish, {applied} of {recorded}");
+                    assert_finished(&fx);
+
+                    let fx = (layout.build)();
+                    let start = fx.tree();
+                    let journal = interrupt(&fx, layout, applied, recorded);
+                    resume_swap(journal, &fx.journal(), Resume::Undo, &CLOSED).unwrap();
+                    assert_eq!(fx.tree(), start, "undo, {applied} of {recorded}");
+                    assert_finished(&fx);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resume_refuses_folders_that_match_no_point_of_the_swap() {
+        let fx = fixture();
+        let journal = interrupt(&fx, LAYOUTS[0], 1, 1);
+        fs::rename(fx.dir("PTU"), fx.dir("elsewhere")).unwrap();
+        let during = fx.tree();
+        assert!(matches!(
+            resume_swap(journal, &fx.journal(), Resume::Undo, &CLOSED),
+            Err(Error::Invalid(_))
+        ));
+        assert_eq!(fx.tree(), during);
+        assert!(fx.journal().exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn swap_checks_the_install_folder_is_writable_before_the_journal() {
+        use crate::safe_write::testing::ReadOnly;
+        let fx = fixture();
+        let before = fx.tree();
+        let journal = plan_swap(&fx.install, "LIVE", "PTU", false).unwrap();
+        let result = {
+            let _guard = ReadOnly::new(&fx.install.root);
+            run_swap(journal, &fx.journal(), &CLOSED)
+        };
+        assert!(matches!(&result, Err(Error::Io { path, .. }) if *path == fx.install.root));
+        assert_eq!(fx.tree(), before);
+        assert!(!fx.journal().exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_pending_swap_matches_another_spelling_of_the_install() {
+        let fx = fixture();
+        interrupt(&fx, LAYOUTS[0], 2, 2);
+        let dir = fx.tmp.path().join("journals");
+        assert_eq!(
+            find_pending_swap(&dir, &fx.install).unwrap().unwrap().0,
+            fx.journal()
+        );
+        let link = fx.tmp.path().join("Games");
+        std::os::unix::fs::symlink(fx.tmp.path(), &link).unwrap();
+        let linked = Install {
+            root: link.join("StarCitizen"),
+            kind: InstallKind::Native,
+        };
+        let old_file = dir.join("swap-0123456789abcdef.json");
+        fs::rename(fx.journal(), &old_file).unwrap();
+        let (file, found) = find_pending_swap(&dir, &linked).unwrap().unwrap();
+        assert_eq!(file, old_file);
+        assert_eq!(found.done, 2);
+        let other = empty();
+        assert!(find_pending_swap(&dir, &other.install).unwrap().is_none());
+        assert!(
+            find_pending_swap(&fx.tmp.path().join("missing"), &fx.install)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn resume_refuses_when_running() {
         let fx = fixture();
         let journal = interrupt(&fx, LAYOUTS[0], 1, 1);
@@ -2409,6 +2736,9 @@ mod tests {
         .unwrap();
         assert_eq!(first.label, "Swap settings with PTU");
         assert_eq!(second.label, "Swap settings with LIVE");
+        assert_eq!(first.state, crate::backup::SnapshotState::Done);
+        assert_eq!(second.state, crate::backup::SnapshotState::Done);
+        assert!(writer.store().interrupted().unwrap().is_empty());
         assert_eq!(fx.read("LIVE/user.cfg"), content("PTU", "user.cfg"));
         assert_eq!(fx.read("PTU/user.cfg"), content("LIVE", "user.cfg"));
         assert!(!fx.path(&format!("LIVE/{attributes}")).exists());
