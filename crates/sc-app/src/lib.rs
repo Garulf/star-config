@@ -58,6 +58,11 @@ pub fn run() -> iced::Result {
                 layout::WINDOW_MIN_WIDTH,
                 layout::WINDOW_MIN_HEIGHT,
             )),
+            #[cfg(target_os = "linux")]
+            platform_specific: window::settings::PlatformSpecific {
+                application_id: String::from("star-config"),
+                ..Default::default()
+            },
             ..window::Settings::default()
         })
         .run();
