@@ -80,6 +80,16 @@ pub(crate) fn relative_to(channel: &Channel, file: &Path) -> Result<String> {
     }
 }
 
+fn is_plain_rel(rel: &str) -> bool {
+    rel.split('/').all(|part| {
+        is_plain_name(part)
+            && matches!(
+                Path::new(part).components().collect::<Vec<_>>().as_slice(),
+                [Component::Normal(_)]
+            )
+    })
+}
+
 fn sequence(id: &str) -> u32 {
     id.split_once("Z-")
         .and_then(|(_, number)| number.parse().ok())
@@ -96,6 +106,9 @@ fn read_manifest(dir: &Path) -> Result<Option<SnapshotInfo>> {
     let Ok(manifest) = toml::from_str::<Manifest>(&text) else {
         return Ok(None);
     };
+    if !manifest.files.iter().all(|file| is_plain_rel(&file.rel)) {
+        return Ok(None);
+    }
     let id = dir.file_name().unwrap_or_default().to_string_lossy();
     Ok(Some(SnapshotInfo {
         id: SnapshotId(id.into_owned()),
@@ -313,6 +326,8 @@ impl BackupStore {
             .map_err(|err| Error::io(path, err))
     }
 
+    /// Restores a snapshot without checking whether the game runs. App code must call
+    /// `Writer::restore` instead.
     pub fn restore(
         &self,
         scope: &Scope,
@@ -325,26 +340,34 @@ impl BackupStore {
             .iter()
             .map(|file| channel.dir.join(&file.rel))
             .collect();
-        let before = self.snapshot(
+        let mut before = self.begin(
             scope,
             channel,
             &targets,
             &format!("Before restore of {}", id.0),
         )?;
-        let mut first_error = None;
-        for file in &info.files {
-            let target = channel.dir.join(&file.rel);
-            if let Err(err) = restore_one(&dir, file, &target) {
-                first_error.get_or_insert(err);
-            }
-        }
-        if let Some(err) = first_error {
-            return Err(err);
-        }
+        put_back(&dir, &info, channel)?;
+        self.finish(scope, &before.id)?;
+        before.state = SnapshotState::Done;
         if info.state == SnapshotState::Applying {
             self.finish(scope, id)?;
         }
         Ok(before)
+    }
+
+    /// Puts back the files of a snapshot whose own apply just failed, without a snapshot first.
+    pub(crate) fn roll_back(
+        &self,
+        scope: &Scope,
+        channel: &Channel,
+        id: &SnapshotId,
+    ) -> Result<()> {
+        let (dir, info) = self.info(scope, id)?;
+        put_back(&dir, &info, channel)?;
+        if info.state == SnapshotState::Applying {
+            self.finish(scope, id)?;
+        }
+        Ok(())
     }
 
     pub fn delete(&self, scope: &Scope, id: &SnapshotId) -> Result<()> {
@@ -370,6 +393,17 @@ impl BackupStore {
         }
         Ok(stale.len())
     }
+}
+
+fn put_back(snapshot_dir: &Path, info: &SnapshotInfo, channel: &Channel) -> Result<()> {
+    let mut first_error = None;
+    for file in &info.files {
+        let target = channel.dir.join(&file.rel);
+        if let Err(err) = restore_one(snapshot_dir, file, &target) {
+            first_error.get_or_insert(err);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 fn restore_one(snapshot_dir: &Path, file: &SnapshotFile, target: &Path) -> Result<()> {
@@ -543,6 +577,85 @@ mod tests {
         assert!(fx.store.interrupted().unwrap().is_empty());
         let listed = fx.store.list(&fx.scope).unwrap();
         assert!(listed.iter().all(|info| info.state == SnapshotState::Done));
+    }
+
+    #[test]
+    fn manifest_with_escaping_rel_is_unreadable_and_restores_nothing() {
+        let root = tempdir().unwrap();
+        let channel = Channel {
+            name: "LIVE".into(),
+            dir: root.path().join("a/b/LIVE"),
+        };
+        fs::create_dir_all(&channel.dir).unwrap();
+        let store = BackupStore::new(root.path().join("backups"));
+        let scope = Scope {
+            install_key: "abc".into(),
+            channel: "LIVE".into(),
+        };
+        let cfg = channel.dir.join("user.cfg");
+        let info = store
+            .snapshot(&scope, &channel, std::slice::from_ref(&cfg), "s")
+            .unwrap();
+        let manifest = store
+            .snapshot_dir(&scope, &info.id)
+            .unwrap()
+            .join("manifest.toml");
+        let text = fs::read_to_string(&manifest).unwrap();
+        fs::write(&manifest, text.replace("\"user.cfg\"", "\"../../x\"")).unwrap();
+        let victim = root.path().join("a/x");
+        fs::write(&victim, b"keep").unwrap();
+        assert!(store.restore(&scope, &channel, &info.id).is_err());
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        assert!(store.list(&scope).unwrap().iter().all(|s| s.id != info.id));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_restore_leaves_its_own_snapshot_applying_for_recovery() {
+        use crate::safe_write::testing::ReadOnly;
+        let fx = fixture();
+        let cfg = fx.channel.dir.join("user.cfg");
+        let locked = fx.channel.dir.join("locked/a.xml");
+        fs::create_dir_all(locked.parent().unwrap()).unwrap();
+        fs::write(&cfg, b"one").unwrap();
+        fs::write(&locked, b"x").unwrap();
+        let info = fx
+            .store
+            .snapshot(&fx.scope, &fx.channel, &[cfg.clone(), locked.clone()], "s")
+            .unwrap();
+        fs::write(&cfg, b"two").unwrap();
+        fs::write(&locked, b"y").unwrap();
+        let guard = ReadOnly::new(locked.parent().unwrap());
+        assert!(fx.store.restore(&fx.scope, &fx.channel, &info.id).is_err());
+        drop(guard);
+        let interrupted = fx.store.interrupted().unwrap();
+        assert_eq!(interrupted.len(), 1);
+        let before = &interrupted[0].1;
+        assert_eq!(before.label, format!("Before restore of {}", info.id.0));
+        fx.store
+            .restore(&fx.scope, &fx.channel, &before.id)
+            .unwrap();
+        assert_eq!(fs::read(&cfg).unwrap(), b"two");
+        assert_eq!(fs::read(&locked).unwrap(), b"y");
+    }
+
+    #[test]
+    fn roll_back_takes_no_snapshot_and_marks_done() {
+        let fx = fixture();
+        let cfg = fx.channel.dir.join("user.cfg");
+        fs::write(&cfg, b"one").unwrap();
+        let begun = fx
+            .store
+            .begin(&fx.scope, &fx.channel, std::slice::from_ref(&cfg), "w")
+            .unwrap();
+        fs::write(&cfg, b"two").unwrap();
+        fx.store
+            .roll_back(&fx.scope, &fx.channel, &begun.id)
+            .unwrap();
+        assert_eq!(fs::read(&cfg).unwrap(), b"one");
+        let listed = fx.store.list(&fx.scope).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].state, SnapshotState::Done);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::backup::SnapshotId;
 use std::path::PathBuf;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -28,6 +29,15 @@ pub enum Error {
     Network(String),
     #[error("{first} and {second} differ only by case", first = first.display(), second = second.display())]
     AmbiguousCase { first: PathBuf, second: PathBuf },
+    #[error(
+        "{write}. Putting the earlier versions back also failed: {restore}. The files may now be a mix of old and new versions; snapshot {id} holds the originals.",
+        id = snapshot.0
+    )]
+    RollbackFailed {
+        write: Box<Error>,
+        restore: Box<Error>,
+        snapshot: SnapshotId,
+    },
 }
 
 impl Error {
@@ -62,5 +72,19 @@ mod tests {
             message: "bad".into(),
         };
         assert_eq!(err.to_string(), "a.xml, line 7: bad");
+    }
+
+    #[test]
+    fn rollback_failure_names_both_errors_and_the_snapshot() {
+        let err = Error::RollbackFailed {
+            write: Box::new(Error::Invalid("disk full".into())),
+            restore: Box::new(Error::Invalid("still full".into())),
+            snapshot: SnapshotId("20261115T120000Z".into()),
+        };
+        let text = err.to_string();
+        assert!(text.starts_with("disk full. "));
+        assert!(text.contains("still full"));
+        assert!(text.contains("mix of old and new"));
+        assert!(text.contains("snapshot 20261115T120000Z holds the originals"));
     }
 }
