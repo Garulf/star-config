@@ -671,8 +671,8 @@ fn copy_settings_copies_only_ticked_parts_and_offers_undo() {
     assert_eq!(toast.undo_in.len(), 1);
     assert_eq!(toast.undo_in[0].channel.name, "PTU");
     assert_eq!(app.context().channel.as_ref().unwrap().name, "LIVE");
-    let index = app.toasts().len() - 1;
-    testkit::feed(&mut app, [app::Message::UndoToast(index)]);
+    let id = app.toast_id(app.toasts().len() - 1).unwrap();
+    testkit::feed(&mut app, [app::Message::UndoToast(id)]);
     assert_eq!(text(&ptu.user_cfg()), PTU_CFG);
     assert_eq!(text(&ptu.attributes_xml()), PTU_ATTRS);
     assert_eq!(

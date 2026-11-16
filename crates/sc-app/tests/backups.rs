@@ -313,7 +313,8 @@ fn undo_after_restore_brings_back_the_newer_content() {
     let (_ctx, mut app, cfg) = restore_setup(temp.path(), Switch::new(false));
     restore_through_the_screen(&mut app);
     let index = app.toasts().len() - 1;
-    feed(&mut app, [Message::UndoToast(index)]);
+    let id = app.toast_id(index).unwrap();
+    feed(&mut app, [Message::UndoToast(id)]);
     assert_eq!(fs::read(&cfg).unwrap(), b"sys_MaxFPS = 144\n");
     assert_eq!(last_toast(&app).kind, ToastKind::Success);
 }
@@ -365,7 +366,8 @@ fn undo_from_a_toast_is_refused_when_the_game_runs() {
     restore_through_the_screen(&mut app);
     probe.set(true);
     let index = app.toasts().len() - 1;
-    feed(&mut app, [Message::UndoToast(index)]);
+    let id = app.toast_id(index).unwrap();
+    feed(&mut app, [Message::UndoToast(id)]);
     assert_eq!(fs::read(&cfg).unwrap(), b"sys_MaxFPS = 60\n");
     let toast = last_toast(&app);
     assert_eq!(toast.kind, ToastKind::Error);

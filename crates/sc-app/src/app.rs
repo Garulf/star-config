@@ -16,13 +16,15 @@ use iced::keyboard::{self, Key, key};
 use iced::widget::{Column, Space, column, container, operation, row, stack, text};
 use iced::{Alignment, Element, Length, Padding, Subscription, Task, Theme, time};
 use iced::{Event, event, mouse, window};
-use sc_core::backup::{Scope, SnapshotId};
+use sc_core::backup::{BackupStore, Scope, SnapshotId};
+use sc_core::guard::Writer;
 use sc_core::install::{Channel, Install};
 use sc_core::launcher::{self, LaunchMethod};
 use sc_core::process::RunState;
 use sc_core::starstrings::Http;
+use std::collections::VecDeque;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -91,8 +93,9 @@ pub enum Message {
     Unlock,
     DialogAction(usize),
     CloseDialog,
-    DismissToast(usize),
-    UndoToast(usize),
+    /// Toasts are addressed by the id [`App::toast_id`] gives, which never shifts.
+    DismissToast(u64),
+    UndoToast(u64),
     Restored(Vec<Scope>, Result<(), String>),
     Recover(Scope, Channel, SnapshotId),
     KeepAsIs(Scope, SnapshotId),
@@ -157,9 +160,11 @@ pub struct App {
     screens: Screens,
     toasts: Vec<Toast>,
     toast_born: Vec<Instant>,
+    toast_ids: Vec<u64>,
+    next_toast_id: u64,
     dialog: Option<Confirm<Message>>,
-    /// A startup question waiting for the one on screen to be answered.
-    queued: Option<Confirm<Message>>,
+    /// Questions waiting for the one on screen to be answered, oldest first.
+    queued: VecDeque<Confirm<Message>>,
     launch: Option<LaunchMethod>,
 }
 
@@ -168,11 +173,11 @@ impl App {
     /// for the selected install.
     pub fn with(ctx: Context) -> Self {
         let launch = detect_launch(&ctx);
-        let mut prompts = [recovery_prompt(&ctx), swap_prompt(&ctx)]
+        let mut queued: VecDeque<Confirm<Message>> = recovery_prompts(&ctx)
             .into_iter()
-            .flatten();
-        let dialog = prompts.next();
-        let queued = prompts.next();
+            .chain(swap_prompt(&ctx))
+            .collect();
+        let dialog = queued.pop_front();
         Self {
             ctx,
             screen: Screen::Overview,
@@ -190,6 +195,8 @@ impl App {
             },
             toasts: Vec::new(),
             toast_born: Vec::new(),
+            toast_ids: Vec::new(),
+            next_toast_id: 0,
             dialog,
             queued,
             launch,
@@ -244,10 +251,17 @@ impl App {
     pub fn push_toast(&mut self, toast: Toast) {
         self.toasts.push(toast);
         self.toast_born.push(Instant::now());
+        self.toast_ids.push(self.next_toast_id);
+        self.next_toast_id += 1;
         while self.toasts.len() > MAX_TOASTS {
-            self.toasts.remove(0);
-            self.toast_born.remove(0);
+            self.remove_toast(0);
         }
+    }
+
+    /// The id of the toast shown at `index`, for [`Message::UndoToast`] and
+    /// [`Message::DismissToast`].
+    pub fn toast_id(&self, index: usize) -> Option<u64> {
+        self.toast_ids.get(index).copied()
     }
 
     fn remove_toast(&mut self, index: usize) -> Option<Toast> {
@@ -255,7 +269,21 @@ impl App {
             return None;
         }
         self.toast_born.remove(index);
+        self.toast_ids.remove(index);
         Some(self.toasts.remove(index))
+    }
+
+    fn toast_index(&self, id: u64) -> Option<usize> {
+        self.toast_ids.iter().position(|known| *known == id)
+    }
+
+    /// Shows `confirm`, or queues it behind the question already on screen.
+    fn ask(&mut self, confirm: Confirm<Message>) {
+        if self.dialog.is_some() {
+            self.queued.push_back(confirm);
+        } else {
+            self.dialog = Some(confirm);
+        }
     }
 
     fn total_pending(&self) -> usize {
@@ -327,7 +355,7 @@ impl App {
             self.push_toast(toast);
         }
         if let Some(confirm) = action.confirm {
-            self.dialog = Some(confirm);
+            self.ask(confirm);
         }
         if let Some(settings) = action.settings {
             self.ctx.settings = settings;
@@ -393,7 +421,7 @@ impl App {
 
     fn confirm_discard(&mut self, then: Message) -> Task<Message> {
         if self.screens.channels.busy() && !self.screens.channels.stopping() {
-            self.dialog = Some(
+            self.ask(
                 Confirm::new(
                     "A copy is running. Stop it and switch?",
                     "The copy stops after the current file. Run Verify on the target in the launcher before you play it.",
@@ -410,7 +438,7 @@ impl App {
         if self.total_pending() == 0 {
             return self.update(then);
         }
-        self.dialog = Some(
+        self.ask(
             Confirm::new(
                 "Discard unsaved changes?",
                 "Switching loads other files, so your unsaved changes will be lost.",
@@ -534,7 +562,7 @@ impl App {
                 Task::none()
             }
             Message::AskUnlock => {
-                self.dialog = Some(
+                self.ask(
                     Confirm::new("Unlock files?", UNLOCK_BODY)
                         .action("Unlock", ButtonKind::Danger, Message::Unlock)
                         .cancel("Cancel"),
@@ -570,11 +598,13 @@ impl App {
                 self.screens.channels.stop_copy();
                 self.confirm_discard(*then)
             }
-            Message::DismissToast(index) => {
-                self.remove_toast(index);
+            Message::DismissToast(id) => {
+                if let Some(index) = self.toast_index(id) {
+                    self.remove_toast(index);
+                }
                 Task::none()
             }
-            Message::UndoToast(index) => self.undo_toast(index),
+            Message::UndoToast(id) => self.undo_toast(id),
             Message::Restored(scopes, result) => {
                 let pruned = match result {
                     Ok(()) => {
@@ -770,7 +800,7 @@ impl App {
             "{} Apply them before the game reads its files?",
             self.pending_text()
         );
-        self.dialog = Some(
+        self.ask(
             Confirm::new("Apply changes first?", body)
                 .action(
                     "Apply and launch",
@@ -807,7 +837,7 @@ impl App {
             body.push_str("\n\n");
             body.push_str(UNKNOWN_WARNING);
         }
-        self.dialog = Some(
+        self.ask(
             Confirm::new("Start the launcher?", body)
                 .action(
                     "Launch",
@@ -831,31 +861,24 @@ impl App {
 
     fn show_queued(&mut self) {
         if self.dialog.is_none() {
-            self.dialog = self.queued.take();
+            self.dialog = self.queued.pop_front();
         }
     }
 
-    fn undo_toast(&mut self, index: usize) -> Task<Message> {
-        let Some(targets) = self.toasts.get(index).map(|toast| toast.undo_in.clone()) else {
+    fn undo_toast(&mut self, id: u64) -> Task<Message> {
+        let Some(index) = self.toast_index(id) else {
             return Task::none();
         };
+        let targets = self.toasts[index].undo_in.clone();
         if targets.is_empty() {
-            return Task::none();
-        }
-        if self.ctx.read_only() {
-            self.push_toast(Toast::error(backups::CLOSE_GAME));
             return Task::none();
         }
         self.remove_toast(index);
         let writer = self.ctx.writer();
+        let layouts = Writer::new(writer.store().clone(), self.ctx.probe(), true);
         let scopes = scopes_of(&targets);
         work::background(
-            move || {
-                targets.iter().rev().try_for_each(|target| {
-                    backups::restore(&writer, &target.scope, &target.channel, &target.snapshot)
-                        .map(|_| ())
-                })
-            },
+            move || undo_all(&targets, &writer, &layouts),
             move |result| Message::Restored(scopes, result),
         )
     }
@@ -1061,10 +1084,11 @@ impl App {
                 }),
             );
         }
+        let ids = &self.toast_ids;
         let toasts = container(toast_stack(
             &self.toasts,
-            Message::DismissToast,
-            Message::UndoToast,
+            |index| Message::DismissToast(ids[index]),
+            |index| Message::UndoToast(ids[index]),
         ))
         .align_right(Length::Fill)
         .align_bottom(Length::Fill)
@@ -1149,15 +1173,89 @@ pub fn game_status(game: RunState, launcher: RunState) -> (&'static str, Tone) {
     }
 }
 
-/// The question for the first interrupted change whose install and channel are still here.
-fn recovery_prompt(ctx: &Context) -> Option<Confirm<Message>> {
-    let interrupted = ctx.writer().store().interrupted().ok()?;
-    interrupted.into_iter().find_map(|(scope, info)| {
-        let channel = channel_of(ctx, &scope)?;
-        let restore = Message::Recover(scope.clone(), channel, info.id.clone());
-        let keep = Message::KeepAsIs(scope, info.id.clone());
-        Some(backups::recovery_confirm(&info, restore, keep))
-    })
+/// One question for each interrupted change whose install and channel are still here.
+fn recovery_prompts(ctx: &Context) -> Vec<Confirm<Message>> {
+    let interrupted = ctx.writer().store().interrupted().unwrap_or_default();
+    interrupted
+        .into_iter()
+        .filter_map(|(scope, info)| {
+            let channel = channel_of(ctx, &scope)?;
+            let restore = Message::Recover(scope.clone(), channel, info.id.clone());
+            let keep = Message::KeepAsIs(scope, info.id.clone());
+            Some(backups::recovery_confirm(&info, restore, keep))
+        })
+        .collect()
+}
+
+/// Restores every target, last first. When some fail, says which channels came back and
+/// which did not.
+fn undo_all(targets: &[UndoIn], writer: &Writer, layouts: &Writer) -> Result<(), String> {
+    let mut restored: Vec<&str> = Vec::new();
+    let mut failed: Vec<(&str, String)> = Vec::new();
+    for target in targets.iter().rev() {
+        let writer = if writer.blocked() && only_layouts(writer.store(), target) {
+            layouts
+        } else {
+            writer
+        };
+        match backups::restore(writer, &target.scope, &target.channel, &target.snapshot) {
+            Ok(_) => restored.push(target.channel.name.as_str()),
+            Err(err) => failed.push((target.channel.name.as_str(), err)),
+        }
+    }
+    match (restored.is_empty(), failed.as_slice()) {
+        (_, []) => Ok(()),
+        (true, [(_, err)]) => Err(err.clone()),
+        _ => Err(partly_undone(&restored, &failed)),
+    }
+}
+
+fn partly_undone(restored: &[&str], failed: &[(&str, String)]) -> String {
+    let mut sentences: Vec<String> = Vec::new();
+    match restored {
+        [] => {}
+        [one] => sentences.push(format!("{one} was restored.")),
+        many => sentences.push(format!("{} were restored.", many.join(" and "))),
+    }
+    for (name, err) in failed {
+        sentences.push(format!("{name} was not restored: {err}"));
+    }
+    sentences.join(" ")
+}
+
+/// Exported layouts are safe to write while the game runs, so a snapshot that holds nothing
+/// else can be restored then too.
+fn only_layouts(store: &BackupStore, target: &UndoIn) -> bool {
+    let channel = &target.channel;
+    let Ok(dir) = channel
+        .mappings_dir()
+        .strip_prefix(&channel.dir)
+        .map(slashed)
+    else {
+        return false;
+    };
+    let prefix = format!("{}/", dir.to_lowercase());
+    store
+        .list(&target.scope)
+        .ok()
+        .and_then(|list| list.into_iter().find(|info| info.id == target.snapshot))
+        .is_some_and(|info| {
+            !info.files.is_empty()
+                && info
+                    .files
+                    .iter()
+                    .all(|file| file.rel.to_lowercase().starts_with(&prefix))
+        })
+}
+
+fn slashed(path: &std::path::Path) -> String {
+    path.components()
+        .filter_map(|part| match part {
+            Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// The question for an unfinished channel swap of the selected install.
@@ -1472,8 +1570,142 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut app = App::with(testkit::context_with_channels(temp.path(), &["LIVE"]));
         app.push_toast(Toast::success("good").with_undo(SnapshotId("x".into())));
-        let _ = app.update(Message::UndoToast(0));
+        let _ = app.update(Message::UndoToast(app.toast_id(0).unwrap()));
         assert_eq!(app.toasts().len(), 1);
+    }
+
+    #[test]
+    fn toasts_are_dismissed_by_id_after_older_ones_leave() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut app = App::with(testkit::context_without_install(temp.path()));
+        app.push_toast(Toast::info("old"));
+        app.push_toast(Toast::error("new"));
+        let new = app.toast_id(1).unwrap();
+        app.toast_born[0] -= TOAST_LIFETIME;
+        let _ = app.update(Message::SweepToasts);
+        assert_eq!(app.toasts().len(), 1);
+        let _ = app.update(Message::DismissToast(new));
+        assert!(app.toasts().is_empty());
+    }
+
+    #[test]
+    fn a_question_from_a_result_waits_for_the_open_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut app = App::with(testkit::context_with_channels(temp.path(), &["LIVE"]));
+        let _ = app.update(Message::AskUnlock);
+        let _ = app.handle(Action::confirm(
+            Confirm::new("Replace layout?", "b").cancel("Cancel"),
+        ));
+        assert_eq!(app.dialog().unwrap().title, "Unlock files?");
+        let _ = app.update(Message::CloseDialog);
+        assert_eq!(app.dialog().unwrap().title, "Replace layout?");
+        let _ = app.update(Message::CloseDialog);
+        assert!(app.dialog().is_none());
+    }
+
+    fn snapshot_of(ctx: &Context, channel: &Channel, files: &[PathBuf]) -> UndoIn {
+        let scope = Scope {
+            install_key: ctx.install.as_ref().unwrap().key(),
+            channel: channel.name.clone(),
+        };
+        let info = ctx
+            .writer()
+            .store()
+            .snapshot(&scope, channel, files, "test")
+            .unwrap();
+        UndoIn {
+            scope,
+            channel: channel.clone(),
+            snapshot: info.id,
+        }
+    }
+
+    #[test]
+    fn every_interrupted_change_is_offered_at_startup() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = testkit::context_with_channels(temp.path(), &["LIVE", "PTU"]);
+        for channel in &ctx.channels {
+            std::fs::write(channel.user_cfg(), "a = 1\n").unwrap();
+            let scope = Scope {
+                install_key: ctx.install.as_ref().unwrap().key(),
+                channel: channel.name.clone(),
+            };
+            ctx.writer()
+                .store()
+                .begin(&scope, channel, &[channel.user_cfg()], "Swap settings")
+                .unwrap();
+        }
+        let mut app = App::with(ctx);
+        let mut offered = Vec::new();
+        while let Some(dialog) = app.dialog() {
+            offered.push(dialog.title.clone());
+            let _ = app.update(Message::CloseDialog);
+        }
+        assert_eq!(
+            offered,
+            ["A change was interrupted", "A change was interrupted"]
+        );
+    }
+
+    #[test]
+    fn undo_that_fails_part_way_names_both_channels() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = testkit::context_with_channels(temp.path(), &["LIVE", "PTU"]);
+        let (live, ptu) = (ctx.channels[0].clone(), ctx.channels[1].clone());
+        std::fs::write(live.user_cfg(), "live = 1\n").unwrap();
+        std::fs::write(ptu.user_cfg(), "ptu = 1\n").unwrap();
+        let first = snapshot_of(&ctx, &live, &[live.user_cfg()]);
+        let second = snapshot_of(&ctx, &ptu, &[ptu.user_cfg()]);
+        ctx.writer()
+            .store()
+            .delete(&first.scope, &first.snapshot)
+            .unwrap();
+        std::fs::write(ptu.user_cfg(), "ptu = 2\n").unwrap();
+        let mut app = App::with(ctx);
+        app.push_toast(Toast::success("Swapped").with_undo_in(vec![first, second]));
+        let task = app.update(Message::UndoToast(app.toast_id(0).unwrap()));
+        testkit::settle(&mut app, task);
+        assert_eq!(
+            std::fs::read_to_string(ptu.user_cfg()).unwrap(),
+            "ptu = 1\n"
+        );
+        let text = &app.toasts().last().unwrap().text;
+        assert!(
+            text.starts_with("PTU was restored. LIVE was not restored: "),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_layout_snapshot_can_be_undone_while_the_game_runs_and_others_cannot() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut ctx = testkit::context_with_channels(temp.path(), &["LIVE"]).with_probe(
+            std::sync::Arc::new(sc_core::process::FixedProbe {
+                game: RunState::Running,
+                launcher: RunState::NotRunning,
+            }),
+        );
+        ctx.game = RunState::Running;
+        let live = ctx.channel.clone().unwrap();
+        let layout = live.mappings_dir().join("layout_test_exported.xml");
+        std::fs::create_dir_all(layout.parent().unwrap()).unwrap();
+        std::fs::write(&layout, "<old/>").unwrap();
+        std::fs::write(live.user_cfg(), "a = 1\n").unwrap();
+        let layout_undo = snapshot_of(&ctx, &live, std::slice::from_ref(&layout));
+        let cfg_undo = snapshot_of(&ctx, &live, &[live.user_cfg()]);
+        std::fs::write(&layout, "<new/>").unwrap();
+        std::fs::write(live.user_cfg(), "a = 2\n").unwrap();
+        let mut app = App::with(ctx);
+        app.push_toast(Toast::success("Saved").with_undo_in(vec![layout_undo]));
+        let task = app.update(Message::UndoToast(app.toast_id(0).unwrap()));
+        testkit::settle(&mut app, task);
+        assert_eq!(std::fs::read_to_string(&layout).unwrap(), "<old/>");
+        app.push_toast(Toast::success("Applied").with_undo_in(vec![cfg_undo]));
+        let id = app.toast_id(app.toasts().len() - 1).unwrap();
+        let task = app.update(Message::UndoToast(id));
+        testkit::settle(&mut app, task);
+        assert_eq!(std::fs::read_to_string(live.user_cfg()).unwrap(), "a = 2\n");
+        assert_eq!(app.toasts().last().unwrap().text, backups::CLOSE_GAME);
     }
 
     #[test]

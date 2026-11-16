@@ -501,7 +501,9 @@ fn apply_result_after_a_channel_switch_stays_with_the_first_channel() {
     assert_eq!(toast.undo_in.len(), 1);
     assert_eq!(toast.undo_in[0].channel.name, "LIVE");
 
-    feed(&mut app, [Message::UndoToast(index)]);
+    let id = app.toast_id(index).unwrap();
+
+    feed(&mut app, [Message::UndoToast(id)]);
     assert_eq!(
         fs::read_to_string(live.user_cfg()).unwrap(),
         "r_displayInfo = 0\n"
