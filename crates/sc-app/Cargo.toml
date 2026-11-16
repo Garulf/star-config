@@ -5,5 +5,18 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "star-config"
+path = "src/main.rs"
+
 [dependencies]
 sc-core.workspace = true
+iced.workspace = true
+tokio.workspace = true
+rfd.workspace = true
+arboard.workspace = true
+open.workspace = true
+
+[dev-dependencies]
+iced_test.workspace = true
+tempfile.workspace = true
