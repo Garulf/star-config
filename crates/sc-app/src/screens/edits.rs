@@ -557,7 +557,7 @@ mod tests {
     fn apply_errors_name_the_file_without_its_path_or_code() {
         let err = Error::Io {
             path: PathBuf::from("/home/someone/Games/StarCitizen/LIVE/user.cfg"),
-            source: std::io::Error::from_raw_os_error(13),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
         };
         let toast = failure_toast(&err);
         assert_eq!(

@@ -48,11 +48,13 @@ fn name(path: &Path) -> String {
         .unwrap_or_else(|| "a file".to_string())
 }
 
+// Windows ends its messages with a full stop, and callers add their own.
 fn without_code(text: &str) -> String {
-    match text.find(" (os error ") {
-        Some(at) => text[..at].to_string(),
-        None => text.to_string(),
-    }
+    let message = match text.find(" (os error ") {
+        Some(at) => &text[..at],
+        None => text,
+    };
+    message.trim_end().trim_end_matches('.').to_string()
 }
 
 #[cfg(test)]
@@ -70,6 +72,12 @@ mod tests {
         assert!(text.starts_with("user.cfg: "), "{text}");
         assert!(!text.contains("os error"), "{text}");
         assert!(!text.contains("/home"), "{text}");
+    }
+
+    #[test]
+    fn windows_style_messages_lose_their_code_and_full_stop() {
+        let err = std::io::Error::other("The data is invalid. (os error 13)");
+        assert_eq!(io_words(&err), "The data is invalid");
     }
 
     #[test]
