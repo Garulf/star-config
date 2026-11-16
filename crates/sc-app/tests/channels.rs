@@ -11,7 +11,7 @@ use sc_app::context::Context;
 use sc_app::screen::{Action, Confirm, Screen, Toast};
 use sc_app::screens::channels::{
     self, CANNOT_TELL, COMPARE_CONTENTS, Message, NOT_COPIED, PENDING_TITLE, STARSTRINGS_NOTE,
-    SWAP_TRAVEL, SWAP_UNDONE, State, Survey,
+    SWAP_TRAVEL, State, Survey,
 };
 use sc_core::channels::{self as core, CopyPlan, Part, PlannedFile, Progress, Step, SwapJournal};
 use sc_core::install::{Channel, Install};
@@ -584,6 +584,7 @@ fn swap_with_the_tick_box_moves_user_files_too() {
 #[cfg(unix)]
 #[test]
 fn swap_in_a_folder_that_cannot_be_renamed_says_so_and_changes_nothing() {
+    use sc_app::screens::channels::SWAP_UNDONE;
     use std::os::unix::fs::PermissionsExt;
     let mut screen = Harness::loaded();
     let root = screen.ctx.install.as_ref().unwrap().root.clone();
