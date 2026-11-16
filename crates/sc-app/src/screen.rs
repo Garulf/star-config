@@ -1,7 +1,8 @@
 use crate::icons;
 use crate::theme::ButtonKind;
 use iced::Task;
-use sc_core::backup::SnapshotId;
+use sc_core::backup::{Scope, SnapshotId};
+use sc_core::install::Channel;
 use sc_core::settings::Settings;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -81,6 +82,16 @@ pub struct Toast {
     pub kind: ToastKind,
     pub text: String,
     pub undo: Option<SnapshotId>,
+    /// Set when Undo must restore snapshots of channels other than the selected one.
+    pub undo_in: Vec<UndoIn>,
+}
+
+/// A snapshot and the channel it belongs to, for an Undo outside the selected channel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UndoIn {
+    pub scope: Scope,
+    pub channel: Channel,
+    pub snapshot: SnapshotId,
 }
 
 impl Toast {
@@ -89,6 +100,7 @@ impl Toast {
             kind,
             text: text.into(),
             undo: None,
+            undo_in: Vec::new(),
         }
     }
 
@@ -106,6 +118,13 @@ impl Toast {
 
     pub fn with_undo(mut self, snapshot: SnapshotId) -> Self {
         self.undo = Some(snapshot);
+        self
+    }
+
+    /// Undo restores every one of `targets`, last first, each in its own channel.
+    pub fn with_undo_in(mut self, targets: Vec<UndoIn>) -> Self {
+        self.undo = targets.first().map(|target| target.snapshot.clone());
+        self.undo_in = targets;
         self
     }
 

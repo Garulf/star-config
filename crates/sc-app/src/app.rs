@@ -1,5 +1,5 @@
 use crate::context::{Context, discover_with};
-use crate::screen::{Action, Confirm, Screen, Toast, ToastKind};
+use crate::screen::{Action, Confirm, Screen, Toast, ToastKind, UndoIn};
 use crate::screens::{
     backups, channels, comms, config, keybinds, maintenance, overview, screenshots, settings,
     starstrings,
@@ -92,6 +92,7 @@ pub enum Message {
     Restored(Result<(), String>),
     Recover(Scope, Channel, SnapshotId),
     KeepAsIs(Scope, SnapshotId),
+    StopCopyAnd(Box<Message>),
     Kept(Result<(), String>),
     Pruned(Result<usize, String>),
     SweepToasts,
@@ -153,6 +154,8 @@ pub struct App {
     toasts: Vec<Toast>,
     toast_born: Vec<Instant>,
     dialog: Option<Confirm<Message>>,
+    /// A startup question waiting for the one on screen to be answered.
+    queued: Option<Confirm<Message>>,
     launch: Option<LaunchMethod>,
 }
 
@@ -161,7 +164,11 @@ impl App {
     /// for the selected install.
     pub fn with(ctx: Context) -> Self {
         let launch = detect_launch(&ctx);
-        let dialog = recovery_prompt(&ctx);
+        let mut prompts = [recovery_prompt(&ctx), swap_prompt(&ctx)]
+            .into_iter()
+            .flatten();
+        let dialog = prompts.next();
+        let queued = prompts.next();
         Self {
             ctx,
             screen: Screen::Overview,
@@ -180,6 +187,7 @@ impl App {
             toasts: Vec::new(),
             toast_born: Vec::new(),
             dialog,
+            queued,
             launch,
         }
     }
@@ -332,6 +340,21 @@ impl App {
     }
 
     fn confirm_discard(&mut self, then: Message) -> Task<Message> {
+        if self.screens.channels.busy() {
+            self.dialog = Some(
+                Confirm::new(
+                    "A copy is running. Stop it and switch?",
+                    "The copy stops after the current file. Run Verify on the target in the launcher before you play it.",
+                )
+                .action(
+                    "Stop and switch",
+                    ButtonKind::Danger,
+                    Message::StopCopyAnd(Box::new(then)),
+                )
+                .cancel("Keep copying"),
+            );
+            return Task::none();
+        }
         if self.total_pending() == 0 {
             return self.update(then);
         }
@@ -472,7 +495,7 @@ impl App {
                 let Some(dialog) = self.dialog.take() else {
                     return Task::none();
                 };
-                match dialog
+                let task = match dialog
                     .actions
                     .into_iter()
                     .nth(index)
@@ -480,11 +503,18 @@ impl App {
                 {
                     Some(message) => self.update(message),
                     None => Task::none(),
-                }
+                };
+                self.show_queued();
+                task
             }
             Message::CloseDialog => {
                 self.dialog = None;
+                self.show_queued();
                 Task::none()
+            }
+            Message::StopCopyAnd(then) => {
+                self.screens.channels.stop_copy();
+                self.confirm_discard(*then)
             }
             Message::DismissToast(index) => {
                 self.remove_toast(index);
@@ -726,21 +756,48 @@ impl App {
         )
     }
 
+    fn show_queued(&mut self) {
+        if self.dialog.is_none() {
+            self.dialog = self.queued.take();
+        }
+    }
+
     fn undo_toast(&mut self, index: usize) -> Task<Message> {
-        let Some(snapshot) = self.toasts.get(index).and_then(|t| t.undo.clone()) else {
+        let Some((undo, mut targets)) = self
+            .toasts
+            .get(index)
+            .map(|toast| (toast.undo.clone(), toast.undo_in.clone()))
+        else {
             return Task::none();
         };
+        if undo.is_none() {
+            return Task::none();
+        }
         if self.ctx.read_only() {
             self.push_toast(Toast::error(backups::CLOSE_GAME));
             return Task::none();
         }
-        let (Some(scope), Some(channel)) = (self.ctx.scope(), self.ctx.channel.clone()) else {
-            return Task::none();
-        };
+        if targets.is_empty() {
+            let (Some(scope), Some(channel), Some(snapshot)) =
+                (self.ctx.scope(), self.ctx.channel.clone(), undo)
+            else {
+                return Task::none();
+            };
+            targets.push(UndoIn {
+                scope,
+                channel,
+                snapshot,
+            });
+        }
         self.remove_toast(index);
         let writer = self.ctx.writer();
         work::background(
-            move || backups::restore(&writer, &scope, &channel, &snapshot).map(|_| ()),
+            move || {
+                targets.iter().rev().try_for_each(|target| {
+                    backups::restore(&writer, &target.scope, &target.channel, &target.snapshot)
+                        .map(|_| ())
+                })
+            },
             Message::Restored,
         )
     }
@@ -1043,6 +1100,11 @@ fn recovery_prompt(ctx: &Context) -> Option<Confirm<Message>> {
         let keep = Message::KeepAsIs(scope, info.id.clone());
         Some(backups::recovery_confirm(&info, restore, keep))
     })
+}
+
+/// The question for an unfinished channel swap of the selected install.
+fn swap_prompt(ctx: &Context) -> Option<Confirm<Message>> {
+    channels::startup_prompt(ctx).map(|confirm| confirm.map(Message::Channels))
 }
 
 fn channel_of(ctx: &Context, scope: &Scope) -> Option<Channel> {
