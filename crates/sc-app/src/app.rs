@@ -15,7 +15,6 @@ use crate::{icons, work};
 use iced::keyboard::{self, Key, key};
 use iced::widget::{Column, Space, column, container, operation, row, stack, text};
 use iced::{Alignment, Element, Length, Padding, Subscription, Task, Theme, time};
-use sc_core::backup::BackupStore;
 use sc_core::install::{Channel, Install};
 use sc_core::launcher::{self, LaunchMethod};
 use sc_core::process::RunState;
@@ -645,10 +644,10 @@ impl App {
             return Task::none();
         };
         self.remove_toast(index);
-        let store = BackupStore::new(self.ctx.dirs.backups());
+        let writer = self.ctx.writer();
         work::background(
             move || {
-                store
+                writer
                     .restore(&scope, &channel, &snapshot)
                     .map(|_| ())
                     .map_err(|err| err.to_string())

@@ -41,7 +41,14 @@ pub fn run() -> iced::Result {
         Ok(None) => return notice("star-config is already open".to_string()),
         Err(err) => return notice(format!("star-config cannot start: {err}")),
     };
-    let ctx = Context::from_system(dirs);
+    let ctx = match Context::from_system(dirs) {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            return notice(format!(
+                "star-config cannot read its settings, so it did not start. Nothing was changed. {err}"
+            ));
+        }
+    };
     let result = iced::application(move || App::boot(ctx.clone()), App::update, App::view)
         .title(App::title)
         .theme(App::theme)

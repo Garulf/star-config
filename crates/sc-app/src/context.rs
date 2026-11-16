@@ -58,14 +58,14 @@ impl Context {
     }
 
     /// Loads settings and discovers installs on this machine. Blocking; call before the UI starts.
-    pub fn from_system(dirs: AppDirs) -> Self {
-        let settings = Settings::load(&dirs.settings_file());
+    pub fn from_system(dirs: AppDirs) -> sc_core::error::Result<Self> {
+        let settings = Settings::load(&dirs.settings_file())?;
         let installs = discover(&DiscoveryEnv::from_system(settings.installs.clone()));
         let mut ctx = Self::new(dirs, settings, installs);
         ctx.discovery = Discovery::System;
         ctx.game = ctx.probe.game();
         ctx.launcher = ctx.probe.launcher();
-        ctx
+        Ok(ctx)
     }
 
     pub fn with_probe(mut self, probe: Arc<dyn GameProbe>) -> Self {
