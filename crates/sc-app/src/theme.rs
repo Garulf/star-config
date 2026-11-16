@@ -30,7 +30,7 @@ pub mod radius {
     pub const PILL: f32 = 999.0;
 }
 
-pub const SIDEBAR_WIDTH: f32 = 220.0;
+pub const SIDEBAR_WIDTH: f32 = 248.0;
 pub const TOPBAR_HEIGHT: f32 = 56.0;
 
 /// Fixed dimensions of kit widgets. Screens pass these instead of literals.
@@ -82,8 +82,8 @@ pub mod layout {
     pub const SHOT_DETAIL_LABEL_WIDTH: f32 = 84.0;
     /// Overview cards: three across at the default window, two at the minimum.
     pub const OVERVIEW_CARD_MAX_WIDTH: f32 = 400.0;
-    pub const OVERVIEW_CARD_HEIGHT: f32 = 208.0;
-    pub const OVERVIEW_THUMB_HEIGHT: f32 = 36.0;
+    pub const OVERVIEW_CARD_HEIGHT: f32 = 200.0;
+    pub const OVERVIEW_THUMB_HEIGHT: f32 = 32.0;
 }
 
 const BORDER_WIDTH: f32 = 1.0;

@@ -1,11 +1,10 @@
 mod facts;
 
-use crate::app::game_status;
 use crate::context::Context;
 use crate::icons;
 use crate::screen::{Action, Screen};
 use crate::theme::{self, ButtonKind, Tone, layout, size, space};
-use crate::widgets::{button, hint, icon_toned, page, status_pill, strong};
+use crate::widgets::{button, hint, icon_toned, page, strong};
 use crate::work;
 use facts::{Card, Facts, Input};
 use iced::widget::{Column, Row, Space, column, container, grid, image, row, text};
@@ -187,8 +186,7 @@ impl State {
         }
     }
 
-    pub fn view<'a>(&'a self, ctx: &'a Context) -> Element<'a, Message> {
-        let (status, tone) = game_status(ctx.game, ctx.launcher);
+    pub fn view<'a>(&'a self, _ctx: &'a Context) -> Element<'a, Message> {
         let cards = grid(
             self.cards()
                 .into_iter()
@@ -200,7 +198,7 @@ impl State {
         page(
             Screen::Overview.label(),
             Some(self.subtitle.as_deref().unwrap_or(SUBTITLE)),
-            vec![status_pill(status, tone)],
+            Vec::new(),
             cards,
         )
     }
