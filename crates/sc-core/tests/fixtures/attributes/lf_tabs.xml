@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Attributes Version="2">
+	<Attr name="HeadtrackingSource" value="1"/>
+	<!-- head tracking -->
+	<Attr name="HeadtrackingToggle" value="1" origin="menu"/>
+	<Attr name="Brightness" value="0.5"/>
+</Attributes>

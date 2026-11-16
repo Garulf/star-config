@@ -1,0 +1,5 @@
+<Attributes Version="1">
+ <Attr name="A" value="1">
+  <Attr name="B" value="2"/>
+ </Attr>
+</Attributes>
