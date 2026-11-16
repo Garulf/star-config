@@ -29,6 +29,7 @@ impl InstanceLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
 
     #[test]
@@ -39,6 +40,15 @@ mod tests {
         assert!(first.is_some());
         assert!(InstanceLock::acquire(&dirs).unwrap().is_none());
         drop(first);
-        assert!(InstanceLock::acquire(&dirs).unwrap().is_some());
+        // A process another test spawns holds a copy of the lock descriptor until it execs.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let again = loop {
+            match InstanceLock::acquire(&dirs).unwrap() {
+                Some(lock) => break Some(lock),
+                None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+                None => break None,
+            }
+        };
+        assert!(again.is_some());
     }
 }
