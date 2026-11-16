@@ -23,5 +23,8 @@ reflink-copy.workspace = true
 walkdir.workspace = true
 time.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+winapi-util.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

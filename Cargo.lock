@@ -3872,6 +3872,7 @@ dependencies = [
  "trash",
  "ureq",
  "walkdir",
+ "winapi-util",
  "zip",
 ]
 

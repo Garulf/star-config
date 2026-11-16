@@ -1027,8 +1027,9 @@ fn undo(journal: &mut SwapJournal, file: &Path, mover: &mut Mover) -> Result<()>
     Ok(())
 }
 
-/// Tells one moved entry from another across renames: device and inode on Unix, creation time on
-/// Windows.
+/// Tells one moved entry from another across renames: device and inode on Unix, volume and file
+/// index on Windows. Creation time does not work there, because NTFS gives a name that was
+/// just freed and taken again the creation time of the entry that left it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntryId(u64, u64);
 
@@ -1041,9 +1042,9 @@ fn entry_id(path: &Path) -> Option<EntryId> {
 
 #[cfg(windows)]
 fn entry_id(path: &Path) -> Option<EntryId> {
-    use std::os::windows::fs::MetadataExt;
-    let meta = fs::symlink_metadata(path).ok()?;
-    Some(EntryId(meta.creation_time(), 0))
+    let handle = winapi_util::Handle::from_path_any(path).ok()?;
+    let info = winapi_util::file::information(&handle).ok()?;
+    Some(EntryId(info.volume_serial_number(), info.file_index()))
 }
 
 #[cfg(not(any(unix, windows)))]

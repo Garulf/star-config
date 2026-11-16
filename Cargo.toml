@@ -25,6 +25,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 trash = "5"
 reflink-copy = "0.1"
 walkdir = "2"
+winapi-util = "0.1"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 tempfile = "3"
 iced = { version = "0.14", features = ["tokio", "image", "svg", "advanced", "fira-sans"] }
