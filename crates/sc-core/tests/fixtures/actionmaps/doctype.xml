@@ -1,0 +1,8 @@
+<!DOCTYPE ActionMaps>
+<ActionMaps version="1" profileName="mylayout">
+ <actionmap name="spaceship_movement">
+  <action name="v_afterburner">
+   <rebind input="js1_button3"/>
+  </action>
+ </actionmap>
+</ActionMaps>

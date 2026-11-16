@@ -1,0 +1,40 @@
+[workspace]
+resolver = "3"
+members = ["crates/sc-core", "crates/sc-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+
+[workspace.dependencies]
+sc-core = { path = "crates/sc-core" }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+sha2 = "0.11"
+sysinfo = "0.40"
+directories = "6"
+similar = "2"
+quick-xml = "0.42"
+ureq = { version = "3", features = ["json"] }
+serde_json = "1"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+trash = "5"
+reflink-copy = "0.1"
+walkdir = "2"
+winapi-util = "0.1"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+tempfile = "3"
+iced = { version = "0.14", features = ["tokio", "image", "svg", "advanced", "fira-sans"] }
+iced_test = "0.14"
+tokio = { version = "1", features = ["rt"] }
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
+arboard = { version = "3", features = ["image-data", "wayland-data-control"] }
+open = "5"
+
+[profile.release]
+lto = "thin"
+strip = true

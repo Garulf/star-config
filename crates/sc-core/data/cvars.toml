@@ -1,0 +1,303 @@
+[[cvar]]
+name = "r.graphicsRenderer"
+kind = "bool"
+default = "1"
+category = "Graphics"
+description = "Vulkan is the default graphics renderer since alpha 4.5 (0 = DX11, 1 = Vulkan)."
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_DepthOfField"
+kind = "bool"
+category = "Graphics"
+description = "if this is enabled while in vr, you get abrupt blurry mobiglass and other visual bugs."
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_MotionBlur"
+kind = "text"
+category = "Graphics"
+description = "0 disabled, 1 vehicle blur, 2 all movement blur"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_filmgrain"
+kind = "bool"
+category = "Graphics"
+description = "(0 disabled, 1 enabled.)"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_vignetteBlur"
+kind = "bool"
+category = "Graphics"
+description = "(0 disabled, 1 enabled.)"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_ssdo"
+kind = "text"
+category = "Graphics"
+description = "Screen space directional occlusion; 0= Disabled; 1= Enabled; 2= Optimized additional ambient occlusion"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "cl_fov"
+kind = "text"
+category = "Camera"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "cl_fovCombat"
+kind = "text"
+category = "Camera"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "cl_fovSocial"
+kind = "text"
+category = "Camera"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_language"
+kind = "text"
+category = "Localisation"
+source = "https://github.com/MrKraken/StarStrings"
+
+[[cvar]]
+name = "Con_Restricted"
+kind = "bool"
+category = "Console"
+description = "Unlock the extended console commands list. The gist sets it to 0 for that."
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_DisplayInfo"
+kind = "text"
+category = "Diagnostics"
+description = "show server details (0 disabled, 1 basic details, 2 includes server population, 3 includes GPU details.)"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_DisplaySessionInfo"
+kind = "bool"
+category = "Diagnostics"
+description = "show the QR Code (0 disabled, 1 enabled.)"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_DisplayFrameGraph"
+kind = "bool"
+category = "Diagnostics"
+description = "show the performance graph in lower left corner (0 disabled, 1 enabled.)"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingToggleEnabled"
+kind = "bool"
+default = "0"
+category = "Head tracking"
+attribute = "HeadtrackingToggle"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingToggleAutoRecalibrate"
+kind = "bool"
+default = "1"
+category = "Head tracking"
+attribute = "HeadtrackingToggleAutoCalibrate"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingGlobalSmoothingPosition"
+kind = "float"
+default = "0.0"
+category = "Head tracking"
+attribute = "HeadtrackingGlobalSmoothingPosition"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingGlobalSmoothingRotation"
+kind = "float"
+default = "0.0"
+category = "Head tracking"
+attribute = "HeadtrackingGlobalSmoothingRotation"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingSource"
+kind = "text"
+default = "0"
+category = "Head tracking"
+description = "Source device number. Which number means which device is not confirmed."
+attribute = "HeadtrackingSource"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingSeatPositionOffsetEnabled"
+kind = "bool"
+default = "1"
+category = "Head tracking"
+attribute = "HeadtrackingEnableSeatPositionOffset"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingThirdPersonCameraEnabled"
+kind = "bool"
+default = "0"
+category = "Head tracking"
+attribute = "HeadtrackingThirdPersonCameraToggle"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingThirdPersonDisableDuringInventory"
+kind = "bool"
+default = "1"
+category = "Head tracking"
+attribute = "HeadtrackingThirdPersonDisableDuringInventory"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingToggleDisableDuringSeat"
+kind = "bool"
+default = "0"
+category = "Head tracking"
+attribute = "HeadtrackingDisableDuringSeat"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingToggleDisableVehicleAds"
+kind = "bool"
+default = "1"
+category = "Head tracking"
+attribute = "HeadtrackingDisableDuringVehicleAds"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingToggleDisableDuringWalking"
+kind = "bool"
+default = "1"
+category = "Head tracking"
+attribute = "HeadtrackingDisableDuringWalking"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingToggleDisableDuringADS"
+kind = "bool"
+default = "1"
+category = "Head tracking"
+attribute = "HeadtrackingDisableDuringADS"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingToggleDisableDuringMobiglass"
+kind = "bool"
+default = "1"
+category = "Head tracking"
+attribute = "HeadtrackingDisableDuringMobiGlas"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingToggleDisableDuringInteractionMode"
+kind = "bool"
+default = "0"
+category = "Head tracking"
+attribute = "HeadtrackingDisableDuringIM"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingRollSeatEnabled"
+kind = "bool"
+default = "1"
+category = "Head tracking"
+attribute = "HeadtrackingEnableRollSeat"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingRollFPSEnabled"
+kind = "bool"
+default = "0"
+category = "Head tracking"
+attribute = "HeadtrackingEnableRollFPS"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingHoldUseRawValuesDuringHold"
+kind = "bool"
+default = "0"
+category = "Head tracking"
+attribute = "HeadtrackingHoldUseRawDuringHold"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtrackingInactivityTime"
+kind = "float"
+default = "2.0"
+category = "Head tracking"
+attribute = "HeadtrackingInactivityTime"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtracking_hmd_fpsMovementMode"
+kind = "bool"
+default = "1"
+category = "Head tracking"
+attribute = "HmdActorControlMode"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtracking_hmd_fpsTriggerResetOnZoom"
+kind = "bool"
+default = "0"
+category = "Head tracking"
+attribute = "HmdResetOnFpsAds"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtracking_hmd_lensDisplayEnabled"
+kind = "float"
+default = "1.0"
+category = "Head tracking"
+attribute = "HmdVisorEnabled"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtracking_hmd_fpsAdsDominantEye"
+kind = "bool"
+default = "1"
+category = "Head tracking"
+attribute = "HmdFpsAdsDominantEye"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtracking_hmd_cursorSize"
+kind = "float"
+default = "1.0"
+category = "Head tracking"
+attribute = "HmdCursorSize"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtracking_hmd_cursorOffsetSensitivity"
+kind = "float"
+default = "2.0"
+category = "Head tracking"
+attribute = "HmdCursorSensitivity"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtracking_hmd_cursorFollowsHead"
+kind = "float"
+default = "0.0"
+category = "Head tracking"
+attribute = "HmdCursorFollowsHead"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_headtracking_hmd_cursorUseEyeTracking"
+kind = "float"
+default = "0.0"
+category = "Head tracking"
+attribute = "HmdCursorUseEyeTracking"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"

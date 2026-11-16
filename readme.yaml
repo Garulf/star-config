@@ -1,0 +1,16 @@
+project:
+  name: star-config
+  owner: Garulf
+  repo: star-config
+  license: MIT
+  tagline: >-
+    A desktop app for Linux and Windows that edits Star Citizen's settings files:
+    user.cfg, keybinds, head tracking and comms, StarStrings, screenshots, shader
+    caches and channels.
+  ci_workflow: ci.yml
+badges:
+  - ci
+  - github-release
+  - license
+screenshots:
+  dir: docs/screenshots

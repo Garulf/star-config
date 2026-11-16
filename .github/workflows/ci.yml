@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      ICED_TEST_BACKEND: tiny-skia
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --no-fail-fast
+      - run: cargo build --release -p sc-app
+      - uses: actions/upload-artifact@v7
+        with:
+          name: star-config-${{ matrix.os }}
+          path: |
+            target/release/star-config
+            target/release/star-config.exe
+          if-no-files-found: error
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: nix build --print-build-logs
+      - name: Check that the libraries loaded at run time are on the rpath
+        run: |
+          rpath=$(readelf -d result/bin/.star-config-wrapped | grep -i runpath)
+          for lib in vulkan-loader wayland libxkbcommon libx11; do
+            grep -qi -- "-$lib-" <<<"$rpath" || { echo "missing $lib in rpath"; exit 1; }
+          done
+      - run: nix flake check

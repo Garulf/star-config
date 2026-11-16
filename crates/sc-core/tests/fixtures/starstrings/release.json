@@ -1,0 +1,18 @@
+{
+  "name": "SC LIVE Build (release-2026-11-12-2c6c06f)",
+  "published_at": "2026-11-12T17:31:51Z",
+  "assets": [
+    {
+      "name": "notes.txt",
+      "size": 1204,
+      "browser_download_url": "https://github.com/MrKraken/StarStrings/releases/download/latest/notes.txt",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "StarStrings-LIVE.zip",
+      "size": 2448158,
+      "browser_download_url": "https://github.com/MrKraken/StarStrings/releases/download/latest/StarStrings-LIVE.zip",
+      "digest": "sha256:d87f62106331fe06cf0fa5207ece7c0c6f9174677eccd260d2db9ade9f2b9906"
+    }
+  ]
+}

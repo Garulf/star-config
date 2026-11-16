@@ -1,0 +1,19 @@
+<ActionMaps>
+ <ActionProfiles version="1" optionsVersion="2" rebindVersion="2" profileName="other">
+  <options type="joystick" instance="1" Product="Other Stick {GUID}"/>
+  <actionmap name="spaceship_movement">
+   <action name="v_afterburner">
+    <rebind input="js1_button9"/>
+    <unexpected/>
+   </action>
+  </actionmap>
+ </ActionProfiles>
+ <ActionProfiles version="1" optionsVersion="2" rebindVersion="2" profileName="default">
+  <options type="joystick" instance="1" Product="Some Stick {GUID}"/>
+  <actionmap name="spaceship_movement">
+   <action name="v_afterburner">
+    <rebind input="js1_button3"/>
+   </action>
+  </actionmap>
+ </ActionProfiles>
+</ActionMaps>

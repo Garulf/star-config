@@ -1,0 +1,55 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+
+  package:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest hosted Ubuntu, so the binary runs on older glibc too.
+          - os: ubuntu-22.04
+            archive: star-config-linux-x86_64.tar.gz
+          - os: windows-latest
+            archive: star-config-windows-x86_64.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p sc-app
+      - name: Package for Linux
+        if: runner.os == 'Linux'
+        run: |
+          mkdir star-config
+          cp target/release/star-config LICENSE README.md star-config/
+          tar -czf ${{ matrix.archive }} star-config
+      - name: Package for Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory star-config
+          Copy-Item target/release/star-config.exe, LICENSE, README.md star-config/
+          Compress-Archive -Path star-config -DestinationPath ${{ matrix.archive }}
+      - name: Attach to the release
+        run: gh release upload ${{ needs.release-please.outputs.tag_name }} ${{ matrix.archive }}
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,51 @@
+<ActionMaps>
+ <ActionProfiles version="1" optionsVersion="2" rebindVersion="2" profileName="default">
+  <deviceoptions name="T16000M Stick {B10A044F-0000-0000-0000-504944564944}">
+   <option input="x" deadzone="0.015"/>
+   <option input="y" deadzone="0.015"/>
+  </deviceoptions>
+  <options type="keyboard" instance="1" Product="Keyboard  {6F1D2B61-D5A0-11CF-BFC7-444553540000}"/>
+  <options type="mouse" instance="1" Product="Mouse  {6F1D2B60-D5A0-11CF-BFC7-444553540000}"/>
+  <options type="joystick" instance="1" Product="T16000M Stick {B10A044F-0000-0000-0000-504944564944}"/>
+  <options type="joystick" instance="2" Product="T16000M Throttle {B10B044F-0000-0000-0000-504944564944}"/>
+  <modifiers />
+  <actionmap name="spaceship_movement">
+   <action name="v_afterburner">
+    <rebind input="js1_button3"/>
+   </action>
+   <action name="v_strafe_up">
+    <rebind input="kb1_space"/>
+    <rebind input="js2_button5"/>
+   </action>
+   <action name="v_strafe_down">
+    <rebind input="kb1_lctrl"/>
+   </action>
+   <action name="v_toggle_decoupled">
+    <rebind input="kb1_lalt+c" multiTap="2"/>
+   </action>
+   <action name="v_boost">
+    <rebind input="js1_Button3"/>
+   </action>
+  </actionmap>
+  <actionmap name="spaceship_targeting">
+   <action name="v_target_cycle_all_fwd">
+    <rebind input="mo1_mwheel_up"/>
+    <rebind input="js3_button1"/>
+   </action>
+   <action name="v_target_pin">
+    <rebind input="js2_hat1_up"/>
+   </action>
+  </actionmap>
+  <actionmap name="player">
+   <action name="jump">
+    <rebind input="kb1_space"/>
+   </action>
+   <action name="crouch">
+    <rebind input="kb1_c"/>
+   </action>
+   <action name="ui_flashlight">
+    <rebind input="gp1_shoulderl"/>
+   </action>
+  </actionmap>
+ </ActionProfiles>
+</ActionMaps>

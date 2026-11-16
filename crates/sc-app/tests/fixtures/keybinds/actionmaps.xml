@@ -1,0 +1,242 @@
+<ActionMaps>
+ <ActionProfiles version="1" optionsVersion="2" rebindVersion="2" profileName="default">
+  <deviceoptions name="VKB Gladiator NXT L  {0200231D-0000-0000-0000-504944564944}">
+   <option input="x" deadzone="0.02"/>
+   <option input="y" deadzone="0.02"/>
+  </deviceoptions>
+  <options type="keyboard" instance="1" Product="Keyboard  {6F1D2B61-D5A0-11CF-BFC7-444553540000}"/>
+  <options type="mouse" instance="1" Product="Mouse  {6F1D2B60-D5A0-11CF-BFC7-444553540000}"/>
+  <options type="joystick" instance="1" Product="VKB Gladiator NXT L  {0200231D-0000-0000-0000-504944564944}"/>
+  <options type="joystick" instance="2" Product="VKB Gladiator NXT R  {0201231D-0000-0000-0000-504944564944}"/>
+  <modifiers />
+  <actionmap name="spaceship_movement">
+   <action name="v_strafe_forward">
+    <rebind input="kb1_w"/>
+   </action>
+   <action name="v_strafe_back">
+    <rebind input="kb1_s"/>
+   </action>
+   <action name="v_strafe_left">
+    <rebind input="kb1_a"/>
+   </action>
+   <action name="v_strafe_right">
+    <rebind input="kb1_d"/>
+   </action>
+   <action name="v_strafe_up">
+    <rebind input="kb1_space"/>
+    <rebind input="js2_button5"/>
+   </action>
+   <action name="v_strafe_down">
+    <rebind input="kb1_lctrl"/>
+    <rebind input="js2_button6"/>
+   </action>
+   <action name="v_roll_left">
+    <rebind input="kb1_q"/>
+   </action>
+   <action name="v_roll_right">
+    <rebind input="kb1_e"/>
+   </action>
+   <action name="v_pitch">
+    <rebind input="js1_y"/>
+   </action>
+   <action name="v_yaw">
+    <rebind input="js1_x"/>
+   </action>
+   <action name="v_roll">
+    <rebind input="js1_rotz"/>
+   </action>
+   <action name="v_strafe_lateral">
+    <rebind input="js2_x"/>
+   </action>
+   <action name="v_strafe_vertical">
+    <rebind input="js2_y"/>
+   </action>
+   <action name="v_strafe_longitudinal">
+    <rebind input="js2_slider1"/>
+   </action>
+   <action name="v_afterburner">
+    <rebind input="kb1_lshift"/>
+    <rebind input="js2_button2"/>
+   </action>
+   <action name="v_space_brake">
+    <rebind input="kb1_x"/>
+    <rebind input="js2_button3"/>
+   </action>
+   <action name="v_ifcs_toggle_vector_decoupling">
+    <rebind input="kb1_lalt+c"/>
+   </action>
+   <action name="v_toggle_landing_system">
+    <rebind input="kb1_n"/>
+   </action>
+   <action name="v_toggle_quantum_mode">
+    <rebind input="kb1_b"/>
+    <rebind input="js2_button10"/>
+   </action>
+  </actionmap>
+  <actionmap name="spaceship_weapons">
+   <action name="v_attack1_group1">
+    <rebind input="mo1_mouse1"/>
+    <rebind input="js1_button1"/>
+   </action>
+   <action name="v_attack1_group2">
+    <rebind input="mo1_mouse2"/>
+    <rebind input="js1_button2"/>
+   </action>
+   <action name="v_weapon_launch_missile">
+    <rebind input="mo1_mouse3"/>
+    <rebind input="js1_button4"/>
+   </action>
+   <action name="v_weapon_cycle_missile_fwd">
+    <rebind input="js1_hat1_right"/>
+   </action>
+   <action name="v_weapon_cycle_missile_back">
+    <rebind input="js1_hat1_left"/>
+   </action>
+   <action name="v_weapon_toggle_gimbal_mode">
+    <rebind input="kb1_g"/>
+    <rebind input="js1_button7"/>
+   </action>
+   <action name="v_master_mode_cycle">
+    <rebind input="mo1_mouse4"/>
+   </action>
+  </actionmap>
+  <actionmap name="spaceship_targeting">
+   <action name="v_target_cycle_hostile_fwd">
+    <rebind input="kb1_r"/>
+    <rebind input="js1_hat2_up"/>
+   </action>
+   <action name="v_target_cycle_hostile_back">
+    <rebind input="js1_hat2_down"/>
+   </action>
+   <action name="v_target_cycle_all_fwd">
+    <rebind input="mo1_mwheel_up"/>
+   </action>
+   <action name="v_target_cycle_all_back">
+    <rebind input="mo1_mwheel_down"/>
+   </action>
+   <action name="v_target_pin_selected">
+    <rebind input="kb1_1"/>
+    <rebind input="js1_button5"/>
+   </action>
+   <action name="v_target_toggle_lock">
+    <rebind input="kb1_t"/>
+    <rebind input="js1_button3"/>
+   </action>
+   <action name="v_toggle_look_ahead">
+    <rebind input="kb1_lalt+l"/>
+   </action>
+   <action name="v_target_reticle_focus">
+    <rebind input="js1_button8"/>
+   </action>
+   <action name="v_target_unpin_all">
+    <rebind input="js1_button4"/>
+   </action>
+  </actionmap>
+  <actionmap name="spaceship_mining">
+   <action name="v_toggle_mining_mode">
+    <rebind input="kb1_m"/>
+    <rebind input="js2_button12"/>
+   </action>
+   <action name="v_increase_mining_throttle">
+    <rebind input="js2_hat1_up"/>
+   </action>
+   <action name="v_decrease_mining_throttle">
+    <rebind input="js2_hat1_down"/>
+   </action>
+   <action name="v_mining_use_consumable1">
+    <rebind input="kb1_lalt+1"/>
+   </action>
+   <action name="v_mining_use_consumable2">
+    <rebind input="kb1_lalt+2"/>
+   </action>
+   <action name="v_mining_use_consumable3">
+    <rebind input="kb1_lalt+3"/>
+   </action>
+   <action name="v_toggle_mining_laser_fire">
+    <rebind input="js2_button14"/>
+   </action>
+  </actionmap>
+  <actionmap name="player">
+   <action name="moveforward">
+    <rebind input="kb1_w"/>
+   </action>
+   <action name="moveback">
+    <rebind input="kb1_s"/>
+   </action>
+   <action name="moveleft">
+    <rebind input="kb1_a"/>
+   </action>
+   <action name="moveright">
+    <rebind input="kb1_d"/>
+   </action>
+   <action name="jump">
+    <rebind input="kb1_space"/>
+   </action>
+   <action name="crouch">
+    <rebind input="kb1_c"/>
+   </action>
+   <action name="prone">
+    <rebind input="kb1_x"/>
+   </action>
+   <action name="sprint">
+    <rebind input="kb1_lshift"/>
+   </action>
+   <action name="attack1">
+    <rebind input="mo1_mouse1"/>
+   </action>
+   <action name="zoom">
+    <rebind input="mo1_mouse2"/>
+   </action>
+   <action name="reload">
+    <rebind input="kb1_r"/>
+   </action>
+   <action name="ui_flashlight">
+    <rebind input="kb1_t"/>
+   </action>
+   <action name="selectpistol">
+    <rebind input="kb1_1"/>
+   </action>
+   <action name="selectprimary">
+    <rebind input="kb1_2"/>
+   </action>
+   <action name="selectsecondary">
+    <rebind input="kb1_3"/>
+   </action>
+   <action name="leanleft">
+    <rebind input="kb1_q"/>
+   </action>
+   <action name="leanright">
+    <rebind input="kb1_e"/>
+   </action>
+  </actionmap>
+  <actionmap name="vehicle_driver">
+   <action name="v_drive_forward">
+    <rebind input="kb1_w"/>
+   </action>
+   <action name="v_drive_back">
+    <rebind input="kb1_s"/>
+   </action>
+   <action name="v_drive_left">
+    <rebind input="kb1_a"/>
+   </action>
+   <action name="v_drive_right">
+    <rebind input="kb1_d"/>
+   </action>
+   <action name="v_drive_brake">
+    <rebind input="kb1_space"/>
+   </action>
+   <action name="v_drive_boost">
+    <rebind input="kb1_lshift"/>
+   </action>
+   <action name="v_drive_horn">
+    <rebind input="kb1_h"/>
+   </action>
+   <action name="v_drive_steer">
+    <rebind input="js1_x"/>
+   </action>
+   <action name="v_drive_throttle">
+    <rebind input="js2_y"/>
+   </action>
+  </actionmap>
+ </ActionProfiles>
+</ActionMaps>

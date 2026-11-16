@@ -1,0 +1,14 @@
+<Attributes Version="1">
+ <Attr name="HeadtrackingSource" value="0"/>
+ <Attr name="HeadtrackingToggle" value="1"/>
+ <Attr name="HeadtrackingToggleAutoCalibrate" value="1"/>
+ <Attr name="HeadtrackingGlobalSmoothingPosition" value="0.25"/>
+ <Attr name="HeadtrackingGlobalSmoothingRotation" value="0.5"/>
+ <Attr name="HeadtrackingInactivityTime" value="2"/>
+ <Attr name="HeadtrackingEnableSeatPositionOffset" value="1"/>
+ <Attr name="HeadtrackingEnableRollSeat" value="1"/>
+ <Attr name="HeadtrackingEnableRollFPS" value="0"/>
+ <Attr name="HeadtrackingDisableDuringSeat" value="0"/>
+ <Attr name="HeadtrackingDisableDuringWalking" value="1"/>
+ <Attr name="FOV" value="90"/>
+</Attributes>

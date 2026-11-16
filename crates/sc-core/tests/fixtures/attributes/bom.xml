@@ -1,0 +1,4 @@
+﻿<Attributes Version="1">
+ <Attr name="HeadtrackingToggle" value="1"/>
+ <Attr name="FOV" value="90"/>
+</Attributes>

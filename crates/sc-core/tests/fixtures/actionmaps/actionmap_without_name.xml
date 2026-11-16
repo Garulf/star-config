@@ -1,0 +1,8 @@
+<ActionMaps version="1" profileName="mylayout">
+ <options type="keyboard" instance="1"/>
+ <actionmap>
+  <action name="v_afterburner">
+   <rebind input="js1_button3"/>
+  </action>
+ </actionmap>
+</ActionMaps>
