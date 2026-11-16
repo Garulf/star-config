@@ -2,6 +2,7 @@ use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use sysinfo::{DiskRefreshKind, Disks};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstallKind {
@@ -29,20 +30,32 @@ pub struct DiscoveryEnv {
 
 impl DiscoveryEnv {
     pub fn from_system(extra: Vec<PathBuf>) -> Self {
-        let drive_roots = if cfg!(windows) {
-            ('C'..='Z')
-                .map(|letter| PathBuf::from(format!("{letter}:\\")))
-                .filter(|root| root.exists())
-                .collect()
-        } else {
-            Vec::new()
-        };
         Self {
             home: home_dir(),
-            drive_roots,
+            drive_roots: fixed_drive_roots(),
             extra,
         }
     }
+}
+
+/// Mount points of fixed disks. Removable and network drives are left out, since probing a
+/// disconnected network drive can block for seconds.
+fn fixed_drive_roots() -> Vec<PathBuf> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let Ok(disks) = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing()) else {
+        return Vec::new();
+    };
+    disks
+        .iter()
+        .filter(|disk| !disk.is_removable())
+        .map(|disk| disk.mount_point().to_path_buf())
+        .collect()
+}
+
+pub(crate) fn canonical_or_raw(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -221,7 +234,8 @@ impl Install {
     }
 
     pub fn key(&self) -> String {
-        let digest = Sha256::digest(self.root.to_string_lossy().as_bytes());
+        let root = canonical_or_raw(&self.root);
+        let digest = Sha256::digest(root.to_string_lossy().as_bytes());
         digest
             .iter()
             .take(8)
@@ -652,6 +666,24 @@ mod tests {
             kind: InstallKind::Native,
         };
         assert_ne!(key, b.key());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_key_is_the_same_through_a_symlinked_path() {
+        let tmp = tempdir().unwrap();
+        let real = tmp.path().join("real/StarCitizen");
+        fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(tmp.path().join("real"), tmp.path().join("Games")).unwrap();
+        let direct = Install {
+            root: real,
+            kind: InstallKind::Native,
+        };
+        let linked = Install {
+            root: tmp.path().join("Games/StarCitizen"),
+            kind: InstallKind::Native,
+        };
+        assert_eq!(direct.key(), linked.key());
     }
 
     #[test]
