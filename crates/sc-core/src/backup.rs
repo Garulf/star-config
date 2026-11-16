@@ -328,7 +328,7 @@ impl BackupStore {
 
     /// Restores a snapshot without checking whether the game runs. App code must call
     /// `Writer::restore` instead.
-    pub fn restore(
+    pub(crate) fn restore(
         &self,
         scope: &Scope,
         channel: &Channel,

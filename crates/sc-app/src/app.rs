@@ -15,6 +15,7 @@ use crate::{icons, work};
 use iced::keyboard::{self, Key, key};
 use iced::widget::{Column, Space, column, container, operation, row, stack, text};
 use iced::{Alignment, Element, Length, Padding, Subscription, Task, Theme, time};
+use sc_core::backup::{Scope, SnapshotId};
 use sc_core::install::{Channel, Install};
 use sc_core::launcher::{self, LaunchMethod};
 use sc_core::process::RunState;
@@ -88,6 +89,10 @@ pub enum Message {
     DismissToast(usize),
     UndoToast(usize),
     Restored(Result<(), String>),
+    Recover(Scope, Channel, SnapshotId),
+    KeepAsIs(Scope, SnapshotId),
+    Kept(Result<(), String>),
+    Pruned(Result<usize, String>),
     SweepToasts,
     SettingsSaved(Result<(), String>),
     Apply,
@@ -153,6 +158,7 @@ impl App {
     /// for the selected install.
     pub fn with(ctx: Context) -> Self {
         let launch = detect_launch(&ctx);
+        let dialog = recovery_prompt(&ctx);
         Self {
             ctx,
             screen: Screen::Overview,
@@ -170,7 +176,7 @@ impl App {
             },
             toasts: Vec::new(),
             toast_born: Vec::new(),
-            dialog: None,
+            dialog,
             launch,
         }
     }
@@ -262,6 +268,9 @@ impl App {
     fn handle(&mut self, action: Action<Message>) -> Task<Message> {
         let mut tasks = vec![action.task];
         if let Some(toast) = action.toast {
+            if toast.undo.is_some() {
+                tasks.push(self.prune());
+            }
             self.push_toast(toast);
         }
         if let Some(confirm) = action.confirm {
@@ -276,6 +285,23 @@ impl App {
             tasks.push(self.rescan());
         }
         Task::batch(tasks)
+    }
+
+    /// Deletes the oldest finished snapshots of the selected channel beyond the kept count.
+    fn prune(&self) -> Task<Message> {
+        let Some(scope) = self.ctx.scope() else {
+            return Task::none();
+        };
+        let store = self.ctx.writer().store().clone();
+        let keep = self.ctx.settings.snapshot_keep;
+        work::background(
+            move || {
+                store
+                    .prune(&scope, keep)
+                    .map_err(|err| backups::words(&err))
+            },
+            Message::Pruned,
+        )
     }
 
     fn save_settings(&self) -> Task<Message> {
@@ -463,11 +489,50 @@ impl App {
             }
             Message::UndoToast(index) => self.undo_toast(index),
             Message::Restored(result) => {
-                match result {
-                    Ok(()) => self.push_toast(Toast::success("Restored the previous files")),
-                    Err(err) => self.push_toast(Toast::error(format!("Could not restore: {err}"))),
-                }
-                self.reload(self.screen)
+                let pruned = match result {
+                    Ok(()) => {
+                        self.push_toast(Toast::success("Restored the previous files"));
+                        self.prune()
+                    }
+                    Err(err) => {
+                        self.push_toast(Toast::error(err));
+                        Task::none()
+                    }
+                };
+                Task::batch([pruned, self.reload(self.screen)])
+            }
+            Message::Recover(scope, channel, snapshot) => {
+                let writer = self.ctx.writer();
+                work::background(
+                    move || backups::restore(&writer, &scope, &channel, &snapshot).map(|_| ()),
+                    Message::Restored,
+                )
+            }
+            Message::KeepAsIs(scope, snapshot) => {
+                let store = self.ctx.writer().store().clone();
+                work::background(
+                    move || {
+                        store
+                            .finish(&scope, &snapshot)
+                            .map_err(|err| backups::words(&err))
+                    },
+                    Message::Kept,
+                )
+            }
+            Message::Kept(Ok(())) => self.reload(Screen::Backups),
+            Message::Kept(Err(err)) => {
+                self.push_toast(Toast::error(format!(
+                    "Could not mark the change as kept: {err}"
+                )));
+                Task::none()
+            }
+            Message::Pruned(Ok(0)) => Task::none(),
+            Message::Pruned(Ok(_)) => self.reload(Screen::Backups),
+            Message::Pruned(Err(err)) => {
+                self.push_toast(Toast::error(format!(
+                    "Could not delete old snapshots: {err}"
+                )));
+                Task::none()
             }
             Message::SweepToasts => {
                 let now = Instant::now();
@@ -637,7 +702,7 @@ impl App {
             return Task::none();
         };
         if self.ctx.read_only() {
-            self.push_toast(Toast::error("Close Star Citizen before undoing"));
+            self.push_toast(Toast::error(backups::CLOSE_GAME));
             return Task::none();
         }
         let (Some(scope), Some(channel)) = (self.ctx.scope(), self.ctx.channel.clone()) else {
@@ -646,12 +711,7 @@ impl App {
         self.remove_toast(index);
         let writer = self.ctx.writer();
         work::background(
-            move || {
-                writer
-                    .restore(&scope, &channel, &snapshot)
-                    .map(|_| ())
-                    .map_err(|err| err.to_string())
-            },
+            move || backups::restore(&writer, &scope, &channel, &snapshot).map(|_| ()),
             Message::Restored,
         )
     }
@@ -924,6 +984,32 @@ pub fn game_status(game: RunState, launcher: RunState) -> (&'static str, Tone) {
         (RunState::NotRunning, RunState::Running) => ("Launcher running", Tone::Neutral),
         (RunState::NotRunning, _) => ("Game closed", Tone::Success),
     }
+}
+
+/// The question for the first interrupted change whose install and channel are still here.
+fn recovery_prompt(ctx: &Context) -> Option<Confirm<Message>> {
+    let interrupted = ctx.writer().store().interrupted().ok()?;
+    interrupted.into_iter().find_map(|(scope, info)| {
+        let channel = channel_of(ctx, &scope)?;
+        let restore = Message::Recover(scope.clone(), channel, info.id.clone());
+        let keep = Message::KeepAsIs(scope, info.id.clone());
+        Some(backups::recovery_confirm(&info, restore, keep))
+    })
+}
+
+fn channel_of(ctx: &Context, scope: &Scope) -> Option<Channel> {
+    let install = ctx
+        .installs
+        .iter()
+        .find(|install| install.key() == scope.install_key)?;
+    let channels = if ctx.install.as_ref() == Some(install) {
+        ctx.channels.clone()
+    } else {
+        install.channels()
+    };
+    channels
+        .into_iter()
+        .find(|channel| channel.name == scope.channel)
 }
 
 fn detect_launch(ctx: &Context) -> Option<LaunchMethod> {

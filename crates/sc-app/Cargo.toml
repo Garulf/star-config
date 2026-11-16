@@ -16,6 +16,7 @@ tokio.workspace = true
 rfd.workspace = true
 arboard.workspace = true
 open.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 iced_test.workspace = true

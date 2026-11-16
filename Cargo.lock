@@ -3840,6 +3840,7 @@ name = "sc-app"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "chrono",
  "iced",
  "iced_test",
  "open",

@@ -67,6 +67,8 @@ pub mod layout {
     pub const SPLIT_LEFT: f32 = 320.0;
     pub const SLIDER_WIDTH: f32 = 200.0;
     pub const VIRTUAL_FALLBACK_HEIGHT: f32 = 2400.0;
+    pub const DIFF_ROW_HEIGHT: f32 = 22.0;
+    pub const DIFF_SIGN_WIDTH: f32 = 16.0;
 }
 
 const BORDER_WIDTH: f32 = 1.0;
@@ -80,6 +82,7 @@ pub const FONT_SEMIBOLD: Font = Font {
     weight: Weight::Semibold,
     ..FONT
 };
+pub const FONT_MONO: Font = Font::MONOSPACE;
 pub const FONT_SEMIBOLD_BYTES: &[u8] = include_bytes!("../assets/fonts/FiraSans-SemiBold.ttf");
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -216,6 +219,7 @@ pub enum ButtonKind {
     Secondary,
     Ghost,
     Danger,
+    DangerGhost,
 }
 
 // Containers
@@ -282,6 +286,22 @@ pub fn sunken(theme: &Theme) -> container::Style {
         background: Some(p.surface.into()),
         border: outline(p.border, radius::MD),
         ..container::Style::default()
+    }
+}
+
+/// One line of a diff: a faint tint of `tone`, none for `Neutral` and `Muted`.
+pub fn diff_line(tone: Tone) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let p = tokens(theme);
+        let background = match tone {
+            Tone::Neutral | Tone::Muted => None,
+            other => Some(mix(p.surface, other.color(&p), 0.14).into()),
+        };
+        container::Style {
+            text_color: Some(p.text),
+            background,
+            ..container::Style::default()
+        }
     }
 }
 
@@ -455,6 +475,7 @@ pub fn button_style(kind: ButtonKind) -> fn(&Theme, button::Status) -> button::S
         ButtonKind::Secondary => secondary,
         ButtonKind::Ghost => ghost,
         ButtonKind::Danger => danger,
+        ButtonKind::DangerGhost => danger_ghost,
     }
 }
 
@@ -536,6 +557,18 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
         border: border::rounded(radius::SM),
         shadow: Shadow::default(),
         snap: true,
+    }
+}
+
+pub fn danger_ghost(theme: &Theme, status: button::Status) -> button::Style {
+    let p = tokens(theme);
+    let style = ghost(theme, status);
+    if status == button::Status::Disabled {
+        return style;
+    }
+    button::Style {
+        text_color: mix(p.danger, p.text, 0.15),
+        ..style
     }
 }
 
