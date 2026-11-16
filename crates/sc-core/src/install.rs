@@ -258,11 +258,22 @@ impl Install {
     }
 }
 
+/// A path as text. Windows takes `/` as well as `\`, so a path put together from parts can
+/// carry both. This shows one kind.
+pub fn shown(path: &Path) -> String {
+    let text = path.display().to_string();
+    if cfg!(windows) {
+        text.replace('/', "\\")
+    } else {
+        text
+    }
+}
+
 fn tilde(path: &Path, home: Option<&Path>) -> String {
     match home.and_then(|home| path.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
-        None => path.display().to_string(),
+        Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, shown(rest)),
+        None => shown(path),
     }
 }
 
@@ -708,7 +719,7 @@ mod tests {
         assert_eq!(tilde(home, Some(home)), "~");
         assert_eq!(
             tilde(Path::new("/opt/sc"), Some(home)),
-            Path::new("/opt/sc").display().to_string()
+            shown(Path::new("/opt/sc"))
         );
         let wine = Install {
             root: PathBuf::from("/opt/pfx/drive_c/StarCitizen"),
@@ -716,7 +727,17 @@ mod tests {
                 prefix: PathBuf::from("/opt/pfx"),
             },
         };
-        assert_eq!(wine.label(), Path::new("/opt/pfx").display().to_string());
+        assert_eq!(wine.label(), shown(Path::new("/opt/pfx")));
+    }
+
+    #[test]
+    fn shown_uses_one_separator_on_windows_and_leaves_unix_names_alone() {
+        let mixed = shown(Path::new("a\\b/c"));
+        if cfg!(windows) {
+            assert_eq!(mixed, "a\\b\\c");
+        } else {
+            assert_eq!(mixed, "a\\b/c");
+        }
     }
 
     #[test]

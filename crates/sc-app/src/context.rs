@@ -1,7 +1,7 @@
 use sc_core::backup::{BackupStore, Scope};
 use sc_core::dirs::AppDirs;
 use sc_core::guard::Writer;
-use sc_core::install::{Channel, DiscoveryEnv, Install, InstallKind, discover};
+use sc_core::install::{Channel, DiscoveryEnv, Install, InstallKind, discover, shown};
 use sc_core::process::{GameProbe, RunState, SystemProbe};
 use sc_core::settings::Settings;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
@@ -87,8 +87,8 @@ impl Context {
             .and_then(|home| path.strip_prefix(home).ok())
         {
             Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-            Some(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),
-            None => path.display().to_string(),
+            Some(rest) => format!("~{MAIN_SEPARATOR}{}", shown(rest)),
+            None => shown(path),
         }
     }
 
