@@ -1,5 +1,5 @@
 use super::attr_edit::{self, AttrFile, Doc};
-use super::edits::{self, Carry, Edits, Pending, Target};
+use super::edits::{self, Carry, Edits, Pending, Target, Written};
 use super::typed::{self, Kind};
 use crate::context::Context;
 use crate::screen::{Action, Origin, Screen, Toast, ToastKind};
@@ -12,7 +12,6 @@ use crate::{icons, work};
 use iced::widget::{Column, row};
 use iced::{Alignment, Element, Task};
 use sc_core::attributes::{Attributes, Op};
-use sc_core::backup::SnapshotInfo;
 use sc_core::catalog::attrs::{self, AttrKind, KnownAttr};
 use sc_core::error::Result;
 use sc_core::staging::Staged;
@@ -35,7 +34,7 @@ pub struct Applied {
     seq: u64,
     origin: Origin,
     attrs: Option<Staged<Attributes>>,
-    result: Result<Option<SnapshotInfo>>,
+    result: Result<Written>,
     count: usize,
 }
 
@@ -227,6 +226,7 @@ impl State {
             scope,
             channel,
             label: SNAPSHOT_LABEL,
+            replay: true,
         };
         let seq = self.seq;
         Action::task(work::background(
@@ -234,7 +234,10 @@ impl State {
                 let mut attrs = attrs;
                 let result = match attrs.as_mut() {
                     Some(staged) => edits::write(&target, &mut [staged as &mut dyn Pending]),
-                    None => Ok(None),
+                    None => Ok(Written {
+                        info: None,
+                        dropped: 0,
+                    }),
                 };
                 Carry::new(Applied {
                     seq,
@@ -258,8 +261,12 @@ impl State {
                 edits.put_back(staged);
             }
         }
-        edits::toast_for(&applied.result, applied.count, &applied.origin)
-            .map_or_else(Action::none, Action::toast)
+        let toast = if applied.seq == self.seq {
+            edits::toast_for(&applied.result, applied.count, &applied.origin)
+        } else {
+            edits::reloaded_toast(&applied.result, applied.count, &applied.origin)
+        };
+        toast.map_or_else(Action::none, Action::toast)
     }
 
     pub fn discard(&mut self) {

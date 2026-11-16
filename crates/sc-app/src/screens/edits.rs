@@ -14,6 +14,8 @@ use std::sync::{Arc, Mutex};
 
 pub const CHANGED_ON_DISK: &str =
     "The file changed on disk. Your edits were kept. Check them and apply again.";
+pub const FORMAT_CHANGED: &str = "The file changed on disk and its format is no longer recognised, so star-config did not change it. Your edits were kept.";
+const RELOADED: &str = "The changes were not applied, and the files were loaded again meanwhile, so your edits were dropped.";
 
 /// Moves a value that is not `Clone` through a message.
 pub struct Carry<T>(Arc<Mutex<Option<T>>>);
@@ -166,6 +168,13 @@ impl<D: Document> Edits<D> {
         }
     }
 
+    /// True while an edit staged under `key` is still pending.
+    pub fn has_key(&self, key: &str) -> bool {
+        self.keys
+            .iter()
+            .any(|staged| staged.as_deref() == Some(key))
+    }
+
     pub fn put_back(&mut self, staged: Staged<D>) {
         let kept = staged.pending();
         if kept == 0 {
@@ -187,7 +196,11 @@ pub trait Pending {
     fn loaded(&self) -> &LoadedFile;
     /// The bytes to write, or `None` when they equal the file.
     fn bytes(&self) -> Option<Vec<u8>>;
-    fn replay(&mut self) -> Result<()>;
+    /// Loads the file again and replays the staged edits on it. Returns how many edits no
+    /// longer applied and were dropped.
+    fn replay(&mut self) -> Result<usize>;
+    /// Whether writing the parsed file back unchanged gives the bytes on disk.
+    fn round_trips(&self) -> bool;
     /// Loads the file again after it was written, dropping the applied edits.
     fn reopen(&mut self);
 }
@@ -202,8 +215,12 @@ impl<D: Document> Pending for Staged<D> {
         (bytes != Staged::loaded(self).bytes).then_some(bytes)
     }
 
-    fn replay(&mut self) -> Result<()> {
-        self.reload_and_replay().map(|_| ())
+    fn replay(&mut self) -> Result<usize> {
+        self.reload_and_replay()
+    }
+
+    fn round_trips(&self) -> bool {
+        self.base().to_bytes() == Staged::loaded(self).bytes
     }
 
     fn reopen(&mut self) {
@@ -221,6 +238,16 @@ pub struct Target {
     pub scope: Scope,
     pub channel: Channel,
     pub label: &'static str,
+    /// False when a staged edit replaces the whole file, so replaying it on a file someone
+    /// else changed would throw their change away.
+    pub replay: bool,
+}
+
+/// What a guarded write did. `info` is `None` when there was nothing to write.
+pub struct Written {
+    pub info: Option<SnapshotInfo>,
+    /// Staged edits that no longer applied to the changed file and were dropped.
+    pub dropped: usize,
 }
 
 impl Target {
@@ -233,18 +260,26 @@ impl Target {
 }
 
 /// Writes every file that has changes in one snapshot. When a file changed on disk since it
-/// was loaded, reloads every file, replays the staged edits and tries once more.
-/// `Ok(None)` means there was nothing to write.
-pub fn write(target: &Target, files: &mut [&mut dyn Pending]) -> Result<Option<SnapshotInfo>> {
-    match write_once(target, files) {
-        Err(Error::ChangedOnDisk { .. }) => {
-            for file in files.iter_mut() {
-                file.replay()?;
-            }
-            write_once(target, files)
+/// was loaded, reloads every file and replays the staged edits. Then it tries once more,
+/// unless `target.replay` is false: the edits stay staged on the new file for the user to
+/// check.
+pub fn write(target: &Target, files: &mut [&mut dyn Pending]) -> Result<Written> {
+    let changed = match write_once(target, files) {
+        Err(changed @ Error::ChangedOnDisk { .. }) => changed,
+        other => return other.map(|info| Written { info, dropped: 0 }),
+    };
+    let mut dropped = 0;
+    for file in files.iter_mut() {
+        dropped += file.replay()?;
+        if !file.round_trips() {
+            return Err(Error::Invalid(FORMAT_CHANGED.into()));
         }
-        other => other,
     }
+    if !target.replay {
+        return Err(changed);
+    }
+    let info = write_once(target, files)?;
+    Ok(Written { info, dropped })
 }
 
 fn write_once(target: &Target, files: &mut [&mut dyn Pending]) -> Result<Option<SnapshotInfo>> {
@@ -276,17 +311,48 @@ fn write_once(target: &Target, files: &mut [&mut dyn Pending]) -> Result<Option<
 }
 
 /// The toast that reports a guarded write of `count` staged changes into `origin`.
-pub fn toast_for(
-    result: &Result<Option<SnapshotInfo>>,
-    count: usize,
-    origin: &Origin,
-) -> Option<Toast> {
+pub fn toast_for(result: &Result<Written>, count: usize, origin: &Origin) -> Option<Toast> {
     match result {
-        Ok(None) => None,
-        Ok(Some(info)) => Some(
-            Toast::success(applied_text(count)).with_undo_in(vec![origin.undo(info.id.clone())]),
-        ),
+        Ok(Written {
+            info: None,
+            dropped: 0,
+        }) => None,
+        Ok(Written {
+            info: None,
+            dropped,
+        }) => Some(Toast::info(format!(
+            "{} Nothing was written.",
+            dropped_text(*dropped)
+        ))),
+        Ok(Written {
+            info: Some(info),
+            dropped,
+        }) => {
+            let applied = applied_text(count.saturating_sub(*dropped).max(1));
+            let text = match dropped {
+                0 => applied,
+                _ => format!("{applied}. {}", dropped_text(*dropped)),
+            };
+            Some(Toast::success(text).with_undo_in(vec![origin.undo(info.id.clone())]))
+        }
         Err(err) => Some(failure_toast(err)),
+    }
+}
+
+/// The toast for a write whose result came back after the screen loaded its files again, so
+/// the edits it carried are gone.
+pub fn reloaded_toast(result: &Result<Written>, count: usize, origin: &Origin) -> Option<Toast> {
+    match result {
+        Err(Error::RollbackFailed { .. }) | Ok(_) => toast_for(result, count, origin),
+        Err(_) => Some(Toast::error(RELOADED)),
+    }
+}
+
+fn dropped_text(dropped: usize) -> String {
+    if dropped == 1 {
+        "1 edit no longer fits the file and was dropped.".to_string()
+    } else {
+        format!("{dropped} edits no longer fit the file and were dropped.")
     }
 }
 
@@ -301,6 +367,7 @@ fn applied_text(count: usize) -> String {
 pub fn failure_toast(err: &Error) -> Toast {
     match err {
         Error::ChangedOnDisk { .. } => Toast::info(CHANGED_ON_DISK),
+        Error::Invalid(message) if message == FORMAT_CHANGED => Toast::error(FORMAT_CHANGED),
         Error::GameRunning => {
             Toast::error("Star Citizen is running, so nothing was written. Your edits were kept.")
         }
@@ -317,6 +384,170 @@ pub fn failure_toast(err: &Error) -> Toast {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sc_core::backup::BackupStore;
+    use sc_core::process::{GameProbe, RunState};
+    use sc_core::usercfg::{Op, UserCfg};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Rewrites the file the second time the writer asks whether the game runs, which is
+    /// between the replay and the second try.
+    struct Rewrites {
+        path: PathBuf,
+        calls: AtomicUsize,
+    }
+
+    impl GameProbe for Rewrites {
+        fn game(&self) -> RunState {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                fs::write(&self.path, "cl_fov = 70\n").unwrap();
+            }
+            RunState::NotRunning
+        }
+
+        fn launcher(&self) -> RunState {
+            RunState::NotRunning
+        }
+    }
+
+    fn target(temp: &Path, probe: Arc<dyn GameProbe>, replay: bool) -> Target {
+        let dir = temp.join("LIVE");
+        fs::create_dir_all(&dir).unwrap();
+        Target {
+            writer: Writer::new(BackupStore::new(temp.join("snapshots")), probe, false),
+            scope: Scope {
+                install_key: "test".into(),
+                channel: "LIVE".into(),
+            },
+            channel: Channel {
+                name: "LIVE".into(),
+                dir,
+            },
+            label: "test",
+            replay,
+        }
+    }
+
+    fn idle() -> Arc<dyn GameProbe> {
+        Arc::new(sc_core::process::FixedProbe {
+            game: RunState::NotRunning,
+            launcher: RunState::NotRunning,
+        })
+    }
+
+    fn staged(target: &Target, text: &str, op: Op) -> Staged<UserCfg> {
+        let path = target.channel.user_cfg();
+        fs::write(&path, text).unwrap();
+        let mut staged = Staged::<UserCfg>::open(&path).unwrap();
+        staged.stage(op).unwrap();
+        staged
+    }
+
+    fn set(key: &str, value: &str) -> Op {
+        Op::Set {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+
+    #[test]
+    fn a_second_outside_change_keeps_the_edits_and_says_so() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("LIVE").join("user.cfg");
+        let probe = Arc::new(Rewrites {
+            path: path.clone(),
+            calls: AtomicUsize::new(0),
+        });
+        let target = target(temp.path(), probe, true);
+        let mut file = staged(&target, "cl_fov = 90\n", set("r_DisplayInfo", "1"));
+        fs::write(&path, "cl_fov = 80\n").unwrap();
+        let result = write(&target, &mut [&mut file as &mut dyn Pending]);
+        assert!(matches!(result, Err(Error::ChangedOnDisk { .. })));
+        assert_eq!(file.pending(), 1);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "cl_fov = 70\n");
+        let toast = toast_for(&result, 1, &target.origin()).unwrap();
+        assert_eq!(toast.text, CHANGED_ON_DISK);
+    }
+
+    #[test]
+    fn a_whole_file_edit_is_not_replayed_over_an_outside_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = target(temp.path(), idle(), false);
+        let path = target.channel.user_cfg();
+        let mut file = staged(
+            &target,
+            "cl_fov = 90\n",
+            Op::ReplaceText("cl_fov = 100\n".into()),
+        );
+        fs::write(&path, "cl_fov = 90\ng_language = english\n").unwrap();
+        let result = write(&target, &mut [&mut file as &mut dyn Pending]);
+        assert!(matches!(result, Err(Error::ChangedOnDisk { .. })));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "cl_fov = 90\ng_language = english\n"
+        );
+        assert_eq!(file.pending(), 1);
+        let again = write(&target, &mut [&mut file as &mut dyn Pending]);
+        assert!(again.is_ok_and(|written| written.info.is_some()));
+    }
+
+    #[test]
+    fn edits_that_no_longer_apply_are_counted_in_the_toast() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = target(temp.path(), idle(), true);
+        let path = target.channel.user_cfg();
+        let mut file = staged(&target, "a = 1\nb = 2\n", set("a", "5"));
+        file.stage(Op::Remove { key: "b".into() }).unwrap();
+        fs::write(&path, "a = 1\n").unwrap();
+        let result = write(&target, &mut [&mut file as &mut dyn Pending]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a = 5\n");
+        assert_eq!(result.as_ref().map(|written| written.dropped).ok(), Some(1));
+        let toast = toast_for(&result, 3, &target.origin()).unwrap();
+        assert_eq!(
+            toast.text,
+            "Applied 2 changes. 1 edit no longer fits the file and was dropped."
+        );
+    }
+
+    /// A staged file whose format stops passing the round trip once it is loaded again.
+    struct Drifts(Staged<UserCfg>, bool);
+
+    impl Pending for Drifts {
+        fn loaded(&self) -> &LoadedFile {
+            Pending::loaded(&self.0)
+        }
+
+        fn bytes(&self) -> Option<Vec<u8>> {
+            Pending::bytes(&self.0)
+        }
+
+        fn replay(&mut self) -> Result<usize> {
+            self.1 = true;
+            Pending::replay(&mut self.0)
+        }
+
+        fn round_trips(&self) -> bool {
+            !self.1
+        }
+
+        fn reopen(&mut self) {
+            Pending::reopen(&mut self.0)
+        }
+    }
+
+    #[test]
+    fn a_file_that_no_longer_round_trips_after_the_replay_is_not_written() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = target(temp.path(), idle(), true);
+        let path = target.channel.user_cfg();
+        let mut file = Drifts(staged(&target, "a = 1\n", set("a", "5")), false);
+        fs::write(&path, "a = 2\n").unwrap();
+        let result = write(&target, &mut [&mut file as &mut dyn Pending]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a = 2\n");
+        let toast = toast_for(&result, 1, &target.origin()).unwrap();
+        assert_eq!(toast.text, FORMAT_CHANGED);
+    }
 
     fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs

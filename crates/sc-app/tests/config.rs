@@ -2,7 +2,7 @@
 mod testkit;
 
 use iced::Size;
-use iced::widget::text_editor::{Action as EditorAction, Edit};
+use iced::widget::text_editor::{Action as EditorAction, Edit, Motion};
 use iced_test::selector::Candidate;
 use iced_test::simulator::Simulator;
 use sc_app::app::{self, App, Message};
@@ -510,4 +510,64 @@ fn apply_result_after_a_channel_switch_stays_with_the_first_channel() {
         app.toasts().last().unwrap().text,
         "Restored the previous files"
     );
+}
+
+#[test]
+fn text_view_edit_never_overwrites_an_outside_change() {
+    let mut fx = fixture(Some(b"cl_fov = 90\n"), None);
+    send(&mut fx, [config::Message::TextView(true)]);
+    send(&mut fx, replace_text("cl_fov = 100\n"));
+    let outside = "cl_fov = 90\ng_language = english\n";
+    fs::write(fx.channel.user_cfg(), outside).unwrap();
+    apply(&mut fx);
+    assert_eq!(String::from_utf8(user_cfg(&fx)).unwrap(), outside);
+    assert!(pending(&fx) > 0, "the edits are kept");
+    assert_eq!(
+        fx.app.toasts().last().unwrap().text,
+        "The file changed on disk. Your edits were kept. Check them and apply again."
+    );
+}
+
+#[test]
+fn text_view_edit_keeps_line_endings_and_the_bom() {
+    let original = b"\xEF\xBB\xBF; header\r\nr_VSync = 1\r\n\r\ncl_fov = 90\r\n";
+    let mut fx = fixture(Some(original), None);
+    send(
+        &mut fx,
+        [
+            config::Message::TextView(true),
+            config::Message::TextEdited(EditorAction::Move(Motion::Down)),
+            config::Message::TextEdited(EditorAction::Move(Motion::End)),
+            config::Message::TextEdited(EditorAction::Edit(Edit::Insert('0'))),
+        ],
+    );
+    assert_eq!(pending(&fx), 1);
+    apply(&mut fx);
+    assert_eq!(
+        user_cfg(&fx),
+        b"\xEF\xBB\xBF; header\r\nr_VSync = 10\r\n\r\ncl_fov = 90\r\n"
+    );
+}
+
+#[test]
+fn a_failed_apply_that_returns_after_a_reload_says_the_edits_were_dropped() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_like_startup(temp.path(), &["LIVE"]);
+    let cfg = ctx.channel.as_ref().unwrap().user_cfg();
+    fs::write(&cfg, "cl_fov = 90\n").unwrap();
+    let mut app = App::with(ctx);
+    feed(&mut app, [Message::Navigate(Screen::Config)]);
+    feed(&mut app, [Message::Config(set("cl_fov", "100"))]);
+    let applying = app.update(Message::Apply);
+    fs::remove_file(&cfg).unwrap();
+    fs::create_dir(&cfg).unwrap();
+    feed(&mut app, [Message::Rescan]);
+    testkit::settle(&mut app, applying);
+    let toast = app.toasts().last().unwrap();
+    assert_eq!(toast.kind, sc_app::screen::ToastKind::Error);
+    assert_eq!(
+        toast.text,
+        "The changes were not applied, and the files were loaded again meanwhile, so your edits were dropped."
+    );
+    assert_eq!(app.pending(Screen::Config), 0);
 }

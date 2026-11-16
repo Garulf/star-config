@@ -10,6 +10,7 @@ pub use source::{CURRENT_LABEL, Source, SourceChoice, UNRECOGNISED, layout_name}
 use crate::context::Context;
 use crate::screen::{Action, Confirm, Origin, Toast};
 use crate::screens::backups::words;
+use crate::screens::edits::FORMAT_CHANGED;
 use crate::theme::ButtonKind;
 use crate::widgets::VirtualListState;
 use crate::work;
@@ -769,9 +770,10 @@ impl State {
         if here {
             self.away_pending = 0;
             if let Some(staged) = handoff.take() {
+                let writable = source::round_trips(&staged);
                 self.doc = Doc::Ready {
                     staged: Box::new(staged),
-                    writable: true,
+                    writable,
                 };
             }
             self.refresh();
@@ -891,9 +893,41 @@ fn failure_toast(what: &str, failure: &WriteFailure) -> Toast {
         WriteFailure::RollbackFailed => Toast::error(ROLLBACK_FAILED),
         WriteFailure::GameRunning => Toast::error(CLOSE_TO_APPLY),
         WriteFailure::ChangedAgain | WriteFailure::Exists => Toast::info(CHANGED_AGAIN),
-        WriteFailure::NoLongerApply(count) => Toast::info(format!(
-            "The file changed on disk and {count} of your edits no longer fit it. Check the rest and apply again."
-        )),
+        WriteFailure::NoLongerApply(count) => Toast::info(removed_text(*count)),
+        WriteFailure::Unrecognised => Toast::error(FORMAT_CHANGED),
         WriteFailure::Failed(reason) => Toast::error(format!("{what}: {reason}")),
+    }
+}
+
+fn removed_text(count: usize) -> String {
+    if count == 1 {
+        "The file changed on disk and 1 of your edits no longer fits it, so it was removed. Check the rest and apply again.".to_string()
+    } else {
+        format!(
+            "The file changed on disk and {count} of your edits no longer fit it, so they were removed. Check the rest and apply again."
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edits_that_no_longer_fit_are_called_removed() {
+        let toast = failure_toast("x", &WriteFailure::NoLongerApply(2));
+        assert!(
+            toast.text.contains("so they were removed"),
+            "{}",
+            toast.text
+        );
+        let toast = failure_toast("x", &WriteFailure::NoLongerApply(1));
+        assert!(toast.text.contains("so it was removed"), "{}", toast.text);
+    }
+
+    #[test]
+    fn a_file_that_no_longer_round_trips_is_not_written() {
+        let toast = failure_toast("x", &WriteFailure::Unrecognised);
+        assert_eq!(toast.text, FORMAT_CHANGED);
     }
 }

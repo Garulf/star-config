@@ -160,10 +160,15 @@ pub fn load(channel: &Channel, wanted: Option<Source>) -> Loaded {
     }
 }
 
+/// Whether writing the parsed file back unchanged gives the bytes on disk.
+pub fn round_trips(staged: &Staged<ActionMaps>) -> bool {
+    staged.base().to_bytes() == staged.loaded().bytes
+}
+
 pub fn open(path: &Path) -> Opened {
     match Staged::<ActionMaps>::open(path) {
         Ok(staged) => {
-            let writable = staged.base().to_bytes() == staged.loaded().bytes;
+            let writable = round_trips(&staged);
             Opened::Ready {
                 doc: Handoff::new(staged, 0),
                 writable,
@@ -211,6 +216,7 @@ fn failure(path: &Path, err: &Error) -> Failure {
 pub enum WriteFailure {
     ChangedAgain,
     NoLongerApply(usize),
+    Unrecognised,
     Exists,
     RollbackFailed,
     GameRunning,
@@ -239,6 +245,9 @@ pub fn apply(
 ) -> (Handoff, Result<SnapshotId, WriteFailure>) {
     let result = match staged.commit(&writer, &scope, &channel, LABEL) {
         Err(Error::ChangedOnDisk { .. }) => match staged.reload_and_replay() {
+            Ok(_) if !round_trips(&staged) => {
+                return (Handoff::new(staged, count), Err(WriteFailure::Unrecognised));
+            }
             Ok(0) => staged.commit(&writer, &scope, &channel, LABEL),
             Ok(dropped) => {
                 return (

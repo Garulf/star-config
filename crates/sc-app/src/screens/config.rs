@@ -2,7 +2,7 @@ mod labels;
 mod text_check;
 
 use super::attr_edit::{self, AttrFile, Doc};
-use super::edits::{self, Carry, Edits, Pending, Target, changed_keys};
+use super::edits::{self, Carry, Edits, Pending, Target, Written, changed_keys};
 use super::typed::{self, Kind};
 use crate::context::Context;
 use crate::screen::{Action, Origin, Screen, Toast, ToastKind};
@@ -16,7 +16,6 @@ use crate::work;
 use iced::widget::{Column, column, container, text_editor};
 use iced::{Alignment, Element, Length, Task};
 use sc_core::attributes::{self, Attributes};
-use sc_core::backup::SnapshotInfo;
 use sc_core::catalog::cvars::{self, Cvar, CvarKind};
 use sc_core::error::Result;
 use sc_core::install::Channel;
@@ -107,7 +106,7 @@ pub struct Applied {
     origin: Origin,
     cfg: Option<Staged<UserCfg>>,
     attrs: Option<Staged<Attributes>>,
-    result: Result<Option<SnapshotInfo>>,
+    result: Result<Written>,
     count: usize,
 }
 
@@ -471,6 +470,10 @@ impl State {
             scope,
             channel,
             label: SNAPSHOT_LABEL,
+            replay: !self
+                .cfg
+                .edits()
+                .is_some_and(|edits| edits.has_key(TEXT_KEY)),
         };
         let seq = self.seq;
         Action::task(work::background(
@@ -514,8 +517,12 @@ impl State {
             self.cfg_changed();
             self.refresh_text();
         }
-        edits::toast_for(&applied.result, applied.count, &applied.origin)
-            .map_or_else(Action::none, Action::toast)
+        let toast = if applied.seq == self.seq {
+            edits::toast_for(&applied.result, applied.count, &applied.origin)
+        } else {
+            edits::reloaded_toast(&applied.result, applied.count, &applied.origin)
+        };
+        toast.map_or_else(Action::none, Action::toast)
     }
 
     pub fn discard(&mut self) {
