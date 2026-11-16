@@ -132,7 +132,7 @@ impl State {
             ),
             button(
                 delete,
-                ButtonKind::Danger,
+                ButtonKind::DangerGhost,
                 idle.then_some(Message::DeleteSelected),
             ),
             Space::new().width(Length::Fill).into(),

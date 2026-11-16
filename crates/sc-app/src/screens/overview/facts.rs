@@ -117,29 +117,6 @@ fn open<D: Document>(path: PathBuf) -> Opened<D> {
     }
 }
 
-fn plural(count: usize, one: &str, many: &str) -> String {
-    if count == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{} {many}", units::thousands(count))
-    }
-}
-
-/// `Today 21:14` as it reads after another word: `today 21:14`.
-fn mid_sentence(label: String) -> String {
-    match label.strip_prefix("Today") {
-        Some(rest) => format!("today{rest}"),
-        None => match label.strip_prefix("Yesterday") {
-            Some(rest) => format!("yesterday{rest}"),
-            None => label,
-        },
-    }
-}
-
-fn when_label(unix: i64) -> String {
-    mid_sentence(when::list_label(when::local(unix), when::now()))
-}
-
 fn config(channel: &Channel, attributes: &Opened<Attributes>) -> Result<Card, String> {
     let cfg = open::<UserCfg>(channel.user_cfg())?;
     let card = match cfg {
@@ -152,14 +129,14 @@ fn config(channel: &Channel, attributes: &Opened<Attributes>) -> Result<Card, St
                 .collect();
             Card::new(format!(
                 "{} in user.cfg",
-                plural(keys.len(), "setting", "settings")
+                units::count(keys.len(), "setting", "settings")
             ))
         }
     };
     Ok(match attributes {
         Ok(Some(doc)) => card.line(format!(
             "{} in the game's settings file",
-            plural(doc.entries().len(), "value", "values")
+            units::count(doc.entries().len(), "value", "values")
         )),
         _ => card,
     })
@@ -183,13 +160,13 @@ fn keybinds(channel: &Channel) -> Result<Card, String> {
         slots = doc.bindings().iter().filter_map(|b| b.slot).collect();
     }
     let conflicts = doc.conflicts().len();
-    let mut card = Card::new(plural(binds, "custom bind", "custom binds"));
+    let mut card = Card::new(units::count(binds, "custom bind", "custom binds"));
     if !slots.is_empty() {
         card = card.line(devices_line(&slots));
     }
     if conflicts > 0 {
         card = card
-            .line(plural(conflicts, "conflict", "conflicts"))
+            .line(units::count(conflicts, "conflict", "conflicts"))
             .attention(true);
     }
     Ok(card)
@@ -260,8 +237,10 @@ fn screenshots(input: &Input) -> Card {
         .collect();
     Card {
         thumbs,
-        ..Card::new(library::screenshots(shots.len()))
-            .line(format!("Newest {}", when_label(newest.modified_unix)))
+        ..Card::new(library::screenshots(shots.len())).line(format!(
+            "Newest {}",
+            when::listed_inline(newest.modified_unix)
+        ))
     }
 }
 
@@ -276,13 +255,16 @@ fn backups(dirs: &AppDirs, scope: &Scope) -> Result<Card, String> {
         .iter()
         .filter(|info| info.state == SnapshotState::Applying)
         .count();
-    let mut card = Card::new(format!("Last snapshot {}", when_label(last.created_unix)))
-        .line(plural(list.len(), "snapshot", "snapshots"));
+    let mut card = Card::new(format!(
+        "Last snapshot {}",
+        when::listed_inline(last.created_unix)
+    ))
+    .line(units::count(list.len(), "snapshot", "snapshots"));
     if interrupted > 0 {
         card = card
             .line(format!(
                 "{} interrupted",
-                plural(interrupted, "change was", "changes were")
+                units::count(interrupted, "change was", "changes were")
             ))
             .attention(true);
     }
@@ -295,7 +277,7 @@ fn shaders(input: &Input) -> Card {
         return Card::new("No shader caches").line("The game builds them when it starts");
     }
     let total: u64 = caches.iter().map(|cache| cache.size).sum();
-    let card = Card::new(units::bytes(total)).line(plural(caches.len(), "cache", "caches"));
+    let card = Card::new(units::bytes(total)).line(units::count(caches.len(), "cache", "caches"));
     if caches.iter().any(|cache| cache.tag == Tag::Current) {
         card
     } else {
@@ -314,7 +296,7 @@ fn channels(channels: &[Channel]) -> Card {
         .collect();
     Card {
         lines,
-        ..Card::new(plural(channels.len(), "channel", "channels"))
+        ..Card::new(units::count(channels.len(), "channel", "channels"))
     }
 }
 
@@ -345,7 +327,7 @@ pub fn starstrings_card(facts: &StarStrings, latest: Option<&Release>) -> Card {
             _ => Card::new("Not installed").line("Clearer item and mission names"),
         };
     };
-    let installed = format!("Installed {}", when_label(record.installed_unix));
+    let installed = format!("Installed {}", when::listed_inline(record.installed_unix));
     if facts.build_changed {
         return Card::new("Game updated since install")
             .line(installed)
@@ -361,7 +343,7 @@ pub fn starstrings_card(facts: &StarStrings, latest: Option<&Release>) -> Card {
         Some(release) => Card::new("Update available")
             .line(format!(
                 "Published {}",
-                units::date_of_iso(&release.published_at)
+                when::iso_day(&release.published_at, when::now())
             ))
             .attention(true),
         None => Card::new("Installed").line(installed),
@@ -394,18 +376,5 @@ mod tests {
             "Keyboard, mouse, 2 joysticks"
         );
         assert_eq!(devices_line(&slots(&[(Gamepad, 1)])), "Gamepad");
-    }
-
-    #[test]
-    fn times_read_mid_sentence() {
-        assert_eq!(mid_sentence("Today 21:14".into()), "today 21:14");
-        assert_eq!(mid_sentence("Yesterday 08:30".into()), "yesterday 08:30");
-        assert_eq!(mid_sentence("14 Nov 19:02".into()), "14 Nov 19:02");
-    }
-
-    #[test]
-    fn plurals_group_thousands() {
-        assert_eq!(plural(1, "bind", "binds"), "1 bind");
-        assert_eq!(plural(1204, "bind", "binds"), "1,204 binds");
     }
 }

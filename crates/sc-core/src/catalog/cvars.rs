@@ -142,6 +142,13 @@ mod tests {
     }
 
     #[test]
+    fn everyday_settings_come_first_and_head_tracking_last() {
+        let all = all();
+        assert_eq!(all.first().unwrap().category, "Graphics");
+        assert_eq!(all.last().unwrap().category, "Head tracking");
+    }
+
+    #[test]
     fn find_is_case_insensitive() {
         assert!(find("G_HEADTRACKINGSOURCE").is_some());
         assert!(find("g_language").is_some());

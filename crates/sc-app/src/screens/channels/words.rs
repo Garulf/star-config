@@ -1,6 +1,5 @@
 //! What the Channels screen says, kept apart so the wording can be read and tested in one place.
 
-use super::super::attr_edit::thousands;
 use super::super::units;
 use sc_core::channels::{CopyOutcome, CopyPlan, Part, SwapJournal};
 
@@ -50,7 +49,7 @@ pub fn part_label(part: Part) -> &'static str {
 }
 
 pub fn count(n: usize, one: &str, many: &str) -> String {
-    format!("{} {}", thousands(n), if n == 1 { one } else { many })
+    units::count(n, one, many)
 }
 
 pub fn parts_text(n: usize) -> String {
@@ -122,7 +121,7 @@ pub fn copy_stopped(target: &str, outcome: &CopyOutcome, total: usize, in_place:
     }
     let done = format!(
         "Copy stopped after {} of {}.",
-        thousands(outcome.files_copied),
+        units::thousands(outcome.files_copied),
         count(total, "file", "files")
     );
     if in_place {
@@ -246,7 +245,7 @@ mod tests {
         let gb = 1024 * 1024 * 1024;
         assert_eq!(
             plan_summary(&plan(1204, 312, 96 * gb, Some(148 * gb))),
-            "1,204 files, 96 GB to copy. 312 files already match and are skipped. 148 GB free on this disk."
+            "1,204 files, 96.0 GB to copy. 312 files already match and are skipped. 148 GB free on this disk."
         );
         assert_eq!(
             plan_summary(&plan(1, 1, 2048, None)),

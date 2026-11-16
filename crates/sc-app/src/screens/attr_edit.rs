@@ -2,6 +2,7 @@
 //! format gate, counting changes, and the plain name and value row.
 
 use super::edits::{Edits, changed_keys};
+use super::units::thousands;
 use crate::screen::ToastKind;
 use crate::theme::{self, layout, size, space};
 use crate::widgets::{banner, change_marker, divider, hint, label, text_field};
@@ -263,19 +264,6 @@ pub fn broken<'a, M: Clone + 'a>(summary: &'a str, raw: &'a str) -> Element<'a, 
     .into()
 }
 
-/// Groups digits in threes: `1204` becomes `1,204`.
-pub fn thousands(count: usize) -> String {
-    let digits = count.to_string();
-    let mut out = String::new();
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
-}
-
 /// `1,204 settings`, or `38 of 1,204` while a search narrows the list.
 pub fn count_line(shown: usize, total: usize) -> String {
     match (shown == total, total) {
@@ -295,9 +283,6 @@ mod tests {
 
     #[test]
     fn thousands_and_count_line() {
-        assert_eq!(thousands(7), "7");
-        assert_eq!(thousands(1204), "1,204");
-        assert_eq!(thousands(1_234_567), "1,234,567");
         assert_eq!(count_line(1204, 1204), "1,204 settings");
         assert_eq!(count_line(38, 1204), "38 of 1,204");
         assert_eq!(count_line(1, 1), "1 setting");

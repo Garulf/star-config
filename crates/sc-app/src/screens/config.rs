@@ -847,8 +847,8 @@ mod tests {
     #[test]
     fn cvar_groups_keep_catalogue_order() {
         let groups = cvar_groups();
-        assert_eq!(groups.first(), Some(&"Head tracking"));
-        assert!(groups.contains(&"Graphics"));
+        assert_eq!(groups.first(), Some(&"Graphics"));
+        assert!(groups.contains(&"Head tracking"));
         let unique: std::collections::HashSet<_> = groups.iter().collect();
         assert_eq!(unique.len(), groups.len());
     }

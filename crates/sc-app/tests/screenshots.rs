@@ -428,7 +428,7 @@ fn clicking_a_tile_opens_the_viewer_with_its_details() {
     assert!(screen.has("320 x 180"));
     let size = fs::metadata(&path).unwrap().len();
     let kilobytes = size as f64 / 1024.0;
-    let expected = if kilobytes < 10.0 {
+    let expected = if kilobytes < 100.0 {
         format!("{kilobytes:.1} KB")
     } else {
         format!("{kilobytes:.0} KB")

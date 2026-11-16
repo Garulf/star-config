@@ -1,3 +1,4 @@
+use super::backups::when;
 use super::units;
 use crate::context::Context;
 use crate::screen::{Action, Confirm, Screen, Toast, ToastKind};
@@ -276,13 +277,13 @@ impl State {
         Action::confirm(
             Confirm::new(
                 format!(
-                    "Delete {} ({})?",
-                    count_of(chosen.len(), "shader cache", "shader caches"),
+                    "Clear {} ({})?",
+                    units::count(chosen.len(), "shader cache", "shader caches"),
                     units::bytes(size)
                 ),
                 format!("{}\n\nThis cannot be undone.", paths.join("\n")),
             )
-            .action("Delete", ButtonKind::Danger, Message::ClearConfirmed)
+            .action("Clear", ButtonKind::Danger, Message::ClearConfirmed)
             .cancel("Cancel"),
         )
     }
@@ -350,9 +351,9 @@ impl State {
             Confirm::new(
                 format!("Delete the {} backup?", backup.version),
                 format!(
-                    "{}, {}, {}. This cannot be undone.",
+                    "{}, backed up {}, {}. This cannot be undone.",
                     kind_label(backup.kind),
-                    units::date_of_unix(backup.created_unix),
+                    when::listed_inline(backup.created_unix),
                     units::bytes(backup.size)
                 ),
             )
@@ -496,10 +497,7 @@ impl State {
                 (cell(version_label(cache)), CACHE_COLUMNS[1].1),
                 (cell(kind_label(cache.kind)), CACHE_COLUMNS[2].1),
                 (cell(size), CACHE_COLUMNS[3].1),
-                (
-                    cell(units::date_of_unix(cache.modified_unix)),
-                    CACHE_COLUMNS[4].1,
-                ),
+                (cell(when::listed(cache.modified_unix)), CACHE_COLUMNS[4].1),
                 (status, CACHE_COLUMNS[5].1),
             ],
             ticked,
@@ -659,7 +657,7 @@ fn plain(err: &Error) -> String {
 fn cleared_toast(outcome: &Outcome) -> Toast {
     let done = format!(
         "Cleared {}, freed {}",
-        count_of(outcome.done, "cache", "caches"),
+        units::count(outcome.done, "cache", "caches"),
         units::bytes(outcome.freed)
     );
     match &outcome.failure {
@@ -672,7 +670,7 @@ fn backed_up_toast(outcome: &Outcome) -> Toast {
     if let Some(failure) = &outcome.failure {
         return Toast::error(partial(outcome, "Backed up and cleared", failure));
     }
-    let caches = count_of(outcome.done, "cache", "caches");
+    let caches = units::count(outcome.done, "cache", "caches");
     if outcome.same_disk {
         Toast::success(format!(
             "Backed up and cleared {caches}. The backups are on the same disk, so no space was freed."
@@ -689,20 +687,16 @@ fn partial(outcome: &Outcome, verb: &str, failure: &str) -> String {
     format!(
         "{verb} {} of {}. The next one failed: {failure}",
         outcome.done,
-        count_of(outcome.asked, "cache", "caches")
+        units::count(outcome.asked, "cache", "caches")
     )
-}
-
-fn count_of(count: usize, one: &str, many: &str) -> String {
-    format!("{count} {}", if count == 1 { one } else { many })
 }
 
 fn busy_text(busy: Busy) -> String {
     match busy {
-        Busy::Clearing(count) => format!("Clearing {}...", count_of(count, "cache", "caches")),
+        Busy::Clearing(count) => format!("Clearing {}...", units::count(count, "cache", "caches")),
         Busy::BackingUp(count) => format!(
             "Backing up and clearing {}...",
-            count_of(count, "cache", "caches")
+            units::count(count, "cache", "caches")
         ),
         Busy::Restoring => "Restoring the backup...".into(),
         Busy::Deleting => "Deleting the backup...".into(),
@@ -765,7 +759,7 @@ fn backup_row(backup: &ShaderBackup, can_act: bool) -> Element<'_, Message> {
     let facts = format!(
         "{}, backed up {}, {}",
         kind_label(backup.kind),
-        units::date_of_unix(backup.created_unix),
+        when::listed_inline(backup.created_unix),
         units::bytes(backup.size)
     );
     let mut text = column![name, hint(facts)].spacing(space::XS);
@@ -778,7 +772,7 @@ fn backup_row(backup: &ShaderBackup, can_act: bool) -> Element<'_, Message> {
         row![
             text.width(Length::Fill),
             button("Restore", ButtonKind::Secondary, restore),
-            button("Delete", ButtonKind::Ghost, delete),
+            button("Delete", ButtonKind::DangerGhost, delete),
         ]
         .spacing(space::SM)
         .align_y(Alignment::Center),
@@ -842,8 +836,8 @@ mod tests {
 
     #[test]
     fn counts_read_naturally() {
-        assert_eq!(count_of(1, "cache", "caches"), "1 cache");
-        assert_eq!(count_of(2, "cache", "caches"), "2 caches");
+        assert_eq!(units::count(1, "cache", "caches"), "1 cache");
+        assert_eq!(units::count(2, "cache", "caches"), "2 caches");
     }
 
     #[test]

@@ -1,4 +1,99 @@
 [[cvar]]
+name = "r.graphicsRenderer"
+kind = "bool"
+default = "1"
+category = "Graphics"
+description = "Vulkan is the default graphics renderer since alpha 4.5 (0 = DX11, 1 = Vulkan)."
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_DepthOfField"
+kind = "bool"
+category = "Graphics"
+description = "if this is enabled while in vr, you get abrupt blurry mobiglass and other visual bugs."
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_MotionBlur"
+kind = "text"
+category = "Graphics"
+description = "0 disabled, 1 vehicle blur, 2 all movement blur"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_filmgrain"
+kind = "bool"
+category = "Graphics"
+description = "(0 disabled, 1 enabled.)"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_vignetteBlur"
+kind = "bool"
+category = "Graphics"
+description = "(0 disabled, 1 enabled.)"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_ssdo"
+kind = "text"
+category = "Graphics"
+description = "Screen space directional occlusion; 0= Disabled; 1= Enabled; 2= Optimized additional ambient occlusion"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "cl_fov"
+kind = "text"
+category = "Camera"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "cl_fovCombat"
+kind = "text"
+category = "Camera"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "cl_fovSocial"
+kind = "text"
+category = "Camera"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "g_language"
+kind = "text"
+category = "Localisation"
+source = "https://github.com/MrKraken/StarStrings"
+
+[[cvar]]
+name = "Con_Restricted"
+kind = "bool"
+category = "Console"
+description = "Unlock the extended console commands list. The gist sets it to 0 for that."
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_DisplayInfo"
+kind = "text"
+category = "Diagnostics"
+description = "show server details (0 disabled, 1 basic details, 2 includes server population, 3 includes GPU details.)"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_DisplaySessionInfo"
+kind = "bool"
+category = "Diagnostics"
+description = "show the QR Code (0 disabled, 1 enabled.)"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
+name = "r_DisplayFrameGraph"
+kind = "bool"
+category = "Diagnostics"
+description = "show the performance graph in lower left corner (0 disabled, 1 enabled.)"
+source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
+
+[[cvar]]
 name = "g_headtrackingToggleEnabled"
 kind = "bool"
 default = "0"
@@ -205,99 +300,4 @@ kind = "float"
 default = "0.0"
 category = "Head tracking"
 attribute = "HmdCursorUseEyeTracking"
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "g_language"
-kind = "text"
-category = "Localisation"
-source = "https://github.com/MrKraken/StarStrings"
-
-[[cvar]]
-name = "Con_Restricted"
-kind = "bool"
-category = "Console"
-description = "Unlock the extended console commands list. The gist sets it to 0 for that."
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "r.graphicsRenderer"
-kind = "bool"
-default = "1"
-category = "Graphics"
-description = "Vulkan is the default graphics renderer since alpha 4.5 (0 = DX11, 1 = Vulkan)."
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "cl_fov"
-kind = "text"
-category = "Camera"
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "cl_fovCombat"
-kind = "text"
-category = "Camera"
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "cl_fovSocial"
-kind = "text"
-category = "Camera"
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "r_DisplayInfo"
-kind = "text"
-category = "Diagnostics"
-description = "show server details (0 disabled, 1 basic details, 2 includes server population, 3 includes GPU details.)"
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "r_DisplaySessionInfo"
-kind = "bool"
-category = "Diagnostics"
-description = "show the QR Code (0 disabled, 1 enabled.)"
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "r_DisplayFrameGraph"
-kind = "bool"
-category = "Diagnostics"
-description = "show the performance graph in lower left corner (0 disabled, 1 enabled.)"
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "r_DepthOfField"
-kind = "bool"
-category = "Graphics"
-description = "if this is enabled while in vr, you get abrupt blurry mobiglass and other visual bugs."
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "r_MotionBlur"
-kind = "text"
-category = "Graphics"
-description = "0 disabled, 1 vehicle blur, 2 all movement blur"
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "r_filmgrain"
-kind = "bool"
-category = "Graphics"
-description = "(0 disabled, 1 enabled.)"
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "r_vignetteBlur"
-kind = "bool"
-category = "Graphics"
-description = "(0 disabled, 1 enabled.)"
-source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
-
-[[cvar]]
-name = "r_ssdo"
-kind = "text"
-category = "Graphics"
-description = "Screen space directional occlusion; 0= Disabled; 1= Enabled; 2= Optimized additional ambient occlusion"
 source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"

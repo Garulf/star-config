@@ -602,7 +602,9 @@ pub fn demo_story(temp: &Path) -> Context {
     install_starstrings(&ctx, EARLIER_LIVE_CHANGE);
     demo_backups(&ctx);
     demo_shaders(temp);
+    demo_shader_backup(&ctx);
     demo_screenshots(&ctx);
+    demo_game_files(&ctx);
     ctx
 }
 
@@ -778,7 +780,7 @@ pub fn demo_backups(ctx: &Context) {
         .unwrap_or(now - chrono::Duration::hours(1))
         .timestamp();
     let day = 86_400;
-    let snapshots: [(Vec<PathBuf>, &str, i64); 5] = [
+    let snapshots: [(Vec<PathBuf>, &str, i64); 4] = [
         (live.managed_files(), "Manual snapshot", today_at - 13 * day),
         (
             vec![live.attributes_xml()],
@@ -795,11 +797,43 @@ pub fn demo_backups(ctx: &Context) {
             "Config changes",
             today_at - 3 * 3_600,
         ),
-        (vec![live.user_cfg()], "Config changes", today_at),
     ];
     for (files, label, unix) in snapshots {
         let info = store.snapshot(&scope, &live, &files, label).unwrap();
         set_snapshot_time(ctx, &info, unix);
+    }
+    let current = fs::read(live.user_cfg()).ok();
+    fs::write(live.user_cfg(), DEMO_USER_CFG_BEFORE).unwrap();
+    let info = store
+        .snapshot(&scope, &live, &[live.user_cfg()], "Config changes")
+        .unwrap();
+    set_snapshot_time(ctx, &info, today_at);
+    match current {
+        Some(bytes) => fs::write(live.user_cfg(), bytes).unwrap(),
+        None => fs::remove_file(live.user_cfg()).unwrap(),
+    }
+}
+
+/// user.cfg as it was before tonight's changes: a lower FOV and a frame cap.
+pub const DEMO_USER_CFG_BEFORE: &str = "\
+; my tweaks, FOV 90 feels right in the Gladius
+r_DisplayInfo = 1
+cl_fov = 80
+g_language = english
+g_headtrackingToggleEnabled = 1
+g_headtrackingGlobalSmoothingRotation = 0.4
+r_MotionBlur = 0
+r_filmgrain = 1
+pl_pit.forceSoftwareCursor = 1
+sys_MaxFPS = 60
+";
+
+/// The big game files of LIVE and PTU, as sparse files of their real size.
+pub fn demo_game_files(ctx: &Context) {
+    for (name, p4k) in [("LIVE", 96 * GB + 410 * MB), ("PTU", 92 * GB + 120 * MB)] {
+        let dir = channel_named(ctx, name).dir;
+        sparse(&dir.join("Data.p4k"), p4k);
+        sparse(&dir.join("Bin64/StarCitizen.exe"), 180 * MB);
     }
 }
 
@@ -814,7 +848,20 @@ fn age(dir: &Path, days: u64) {
     fs::File::open(dir).unwrap().set_modified(when).unwrap();
 }
 
-/// Caches for the current build and an older one, as sparse files.
+/// Backs up and clears the oldest demo cache, so Maintenance lists one shader backup.
+pub fn demo_shader_backup(ctx: &Context) {
+    let install = ctx.install.clone().unwrap();
+    let roots = sc_core::shaders::appdata_roots(&install, None);
+    let old = sc_core::shaders::discover(&install, &roots)
+        .into_iter()
+        .find(|cache| cache.version.as_deref() == Some("sc-alpha-4.1.1"))
+        .unwrap();
+    sc_core::shaders::ShaderBackups::new(ctx.dirs.shader_backups())
+        .backup_and_clear(&old, idle_probe().as_ref())
+        .unwrap();
+}
+
+/// Caches for the current build and two older ones, as sparse files.
 pub fn demo_shaders(temp: &Path) {
     let sc = shader_cache_dir(temp);
     sparse(
@@ -833,6 +880,10 @@ pub fn demo_shaders(temp: &Path) {
     sparse(
         &sc.join(SHADER_OLDER).join("vulkanshadercache/pipeline.bin"),
         380 * MB,
+    );
+    sparse(
+        &sc.join("sc-alpha-4.1.1/shaders/cache-0.bin"),
+        GB + 200 * MB,
     );
     for (version, kind, days) in [
         (SHADER_CURRENT, "shaders", 2),

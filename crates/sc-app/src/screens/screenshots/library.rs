@@ -107,23 +107,7 @@ pub fn count_line(count: usize, bytes: u64) -> String {
 
 /// `1 screenshot`, `2,140 screenshots`.
 pub fn screenshots(count: usize) -> String {
-    if count == 1 {
-        "1 screenshot".to_string()
-    } else {
-        format!("{} screenshots", grouped(count))
-    }
-}
-
-fn grouped(count: usize) -> String {
-    let digits = count.to_string();
-    let mut out = String::new();
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
+    units::count(count, "screenshot", "screenshots")
 }
 
 pub fn channel_label(shot: &Shot) -> &str {

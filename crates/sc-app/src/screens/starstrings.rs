@@ -1,3 +1,4 @@
+use super::backups::when;
 use super::units;
 use crate::context::Context;
 use crate::icons;
@@ -492,14 +493,14 @@ impl State {
                 record.release_name.clone(),
                 Some(format!(
                     "Installed {}",
-                    units::date_of_unix(record.installed_unix)
+                    when::listed_inline(record.installed_unix)
                 )),
             ),
             Some(Status::Modified(record)) => (
                 record.release_name.clone(),
                 Some(format!(
                     "Installed {}, edited since",
-                    units::date_of_unix(record.installed_unix)
+                    when::listed_inline(record.installed_unix)
                 )),
             ),
             Some(Status::Foreign) => (
@@ -531,7 +532,7 @@ impl State {
                 release.name.clone(),
                 Some(format!(
                     "Published {}, {}",
-                    units::date_of_iso(&release.published_at),
+                    when::iso_day(&release.published_at, when::now()),
                     units::bytes(release.asset_size)
                 )),
             ),
@@ -584,7 +585,7 @@ impl State {
         if self.installed() {
             line = line.push(button(
                 "Uninstall",
-                ButtonKind::Danger,
+                ButtonKind::DangerGhost,
                 can_change.then_some(Message::Uninstall),
             ));
         }

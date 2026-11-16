@@ -332,7 +332,7 @@ fn lists_known_channels_installed_first_with_build_and_user_file_line() {
     let installed: Vec<bool> = survey.facts.iter().map(|f| f.installed).collect();
     assert_eq!(installed, [true, true, false, false, false]);
     for name in names {
-        assert!(screen.has(name), "{name}");
+        assert!(screen.has_part(name), "{name}");
     }
     assert!(screen.has("Installed"));
     assert!(screen.has("Not installed"));
@@ -986,7 +986,7 @@ fn channels_pictures() {
         show_plan(&mut app);
         assert!(
             Simulator::with_size(sc_app::settings(), FULL, app.view())
-                .find("1,204 files, 96 GB to copy. 312 files already match and are skipped. 148 GB free on this disk.")
+                .find("1,204 files, 96.4 GB to copy. 312 files already match and are skipped. 148 GB free on this disk.")
                 .is_ok()
         );
         shot(&app, &format!("channels-{name}"));

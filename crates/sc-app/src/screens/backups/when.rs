@@ -1,4 +1,4 @@
-//! How snapshot times and labels read in the UI, in local time.
+//! How dates and times read everywhere in the UI, always in local time.
 
 use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveDateTime};
 
@@ -26,13 +26,57 @@ pub(crate) fn list_label(at: NaiveDateTime, now: NaiveDateTime) -> String {
     }
 }
 
-/// `14 Nov 19:02`, with the year when it is not this one. Reads well after "on".
+/// `14 Nov 19:02`, or `14 Nov 2025` when it is not this year. Reads well after "on".
 pub(crate) fn short(at: NaiveDateTime, now: NaiveDateTime) -> String {
     if at.year() == now.year() {
         at.format("%-d %b %H:%M").to_string()
     } else {
-        at.format("%-d %b %Y %H:%M").to_string()
+        day(at, now)
     }
+}
+
+/// [`list_label`] as it reads after another word: `today 21:14`, `yesterday 08:30`.
+pub(crate) fn inline(at: NaiveDateTime, now: NaiveDateTime) -> String {
+    let label = list_label(at, now);
+    match (label.strip_prefix("Today"), label.strip_prefix("Yesterday")) {
+        (Some(rest), _) => format!("today{rest}"),
+        (_, Some(rest)) => format!("yesterday{rest}"),
+        _ => label,
+    }
+}
+
+/// A Unix time as [`list_label`] shows it now: `Today 21:14`, `14 Nov 19:02`.
+pub(crate) fn listed(unix: i64) -> String {
+    list_label(local(unix), now())
+}
+
+/// A Unix time as [`inline`] shows it now: `today 21:14`, `14 Nov 19:02`.
+pub(crate) fn listed_inline(unix: i64) -> String {
+    inline(local(unix), now())
+}
+
+/// The date alone: `14 Nov`, or `14 Nov 2025` when it is not this year.
+pub(crate) fn day(at: NaiveDateTime, now: NaiveDateTime) -> String {
+    if at.year() == now.year() {
+        at.format("%-d %b").to_string()
+    } else {
+        at.format("%-d %b %Y").to_string()
+    }
+}
+
+/// An ISO 8601 timestamp such as `2026-11-12T17:31:51Z` in local time.
+pub(crate) fn from_iso(timestamp: &str) -> Option<NaiveDateTime> {
+    DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|at| at.with_timezone(&Local).naive_local())
+}
+
+/// The date of an ISO 8601 timestamp as [`day`] shows it, or the text itself when it is
+/// not a timestamp.
+pub(crate) fn iso_day(timestamp: &str, now: NaiveDateTime) -> String {
+    from_iso(timestamp)
+        .map(|at| day(at, now))
+        .unwrap_or_else(|| timestamp.to_string())
 }
 
 /// `14 November 2026, 19:02`.
@@ -106,7 +150,25 @@ mod tests {
             .unwrap()
             .and_hms_opt(9, 5, 0)
             .unwrap();
-        assert_eq!(list_label(last_year, at(15, 22, 0)), "30 Dec 2025 09:05");
+        assert_eq!(list_label(last_year, at(15, 22, 0)), "30 Dec 2025");
+        assert_eq!(day(last_year, at(15, 22, 0)), "30 Dec 2025");
+        assert_eq!(day(at(3, 9, 5), at(15, 22, 0)), "3 Nov");
+    }
+
+    #[test]
+    fn inline_labels_read_mid_sentence() {
+        let now = at(15, 22, 0);
+        assert_eq!(inline(at(15, 21, 14), now), "today 21:14");
+        assert_eq!(inline(at(14, 8, 30), now), "yesterday 08:30");
+        assert_eq!(inline(at(3, 19, 2), now), "3 Nov 19:02");
+    }
+
+    #[test]
+    fn iso_timestamps_become_local_days() {
+        let now = at(15, 22, 0);
+        let local = from_iso("2026-11-12T12:00:00Z").unwrap();
+        assert_eq!(iso_day("2026-11-12T12:00:00Z", now), day(local, now));
+        assert_eq!(iso_day("soon", now), "soon");
     }
 
     #[test]

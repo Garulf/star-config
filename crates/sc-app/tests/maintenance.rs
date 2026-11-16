@@ -244,7 +244,7 @@ fn clear_asks_naming_count_and_size_then_deletes() {
     assert!(screen.has("2 selected, 3.0 KB"));
     assert_eq!(screen.click("Clear"), 1);
     let confirm = screen.seen.confirm.as_ref().expect("asks first");
-    assert_eq!(confirm.title, "Delete 2 shader caches (3.0 KB)?");
+    assert_eq!(confirm.title, "Clear 2 shader caches (3.0 KB)?");
     let shown = screen.ctx.display_path(&screen.cache(OLDER, "shaders"));
     assert!(shown.starts_with('~'), "{shown}");
     assert!(confirm.body.contains(&shown), "{}", confirm.body);
@@ -423,7 +423,7 @@ fn translation_layer_caches_get_their_own_table() {
     assert!(screen.has("TRANSLATION LAYER CACHES"));
     assert!(screen.has("DXVK"));
     assert!(screen.has("Tick the caches to back up or clear."));
-    assert!(screen.has("10 KB"));
+    assert!(screen.has("10.0 KB"));
 }
 
 // Pictures --------------------------------------------------------------------

@@ -106,11 +106,11 @@ impl State {
             .filter(|facts| facts.installed)
             .map(|facts| self.channel_card(facts))
             .collect();
-        let missing: Vec<Element<'_, Message>> = self
+        let missing: Vec<&str> = self
             .facts
             .iter()
             .filter(|facts| !facts.installed)
-            .map(missing_card)
+            .map(|facts| facts.name.as_str())
             .collect();
         let mut grid = Column::new().spacing(space::LG);
         let mut current = Row::new().spacing(space::LG);
@@ -131,7 +131,7 @@ impl State {
             grid = grid.push(current);
         }
         if !missing.is_empty() {
-            grid = grid.push(Row::with_children(missing).spacing(space::LG));
+            grid = grid.push(missing_line(&missing));
         }
         if !self.surveyed {
             grid = grid.push(muted("Looking at the channels in this install..."));
@@ -448,18 +448,17 @@ impl State {
     }
 }
 
-fn missing_card(facts: &ChannelFacts) -> Element<'_, Message> {
+/// The channels this install could have but does not, on one quiet line.
+fn missing_line<'a>(names: &[&str]) -> Element<'a, Message> {
     container(
-        row![
-            strong(facts.name.as_str()).width(Length::Fill),
-            tag("Not installed", Tone::Muted)
-        ]
-        .spacing(space::SM)
-        .align_y(Alignment::Center),
+        row![tag("Not installed", Tone::Muted), hint(names.join(", "))]
+            .spacing(space::SM)
+            .align_y(Alignment::Center),
     )
-    .padding(ROW_PADDING)
-    .width(Length::Fill)
-    .style(theme::card)
+    .padding(Padding {
+        left: space::XS,
+        ..Padding::ZERO
+    })
     .into()
 }
 

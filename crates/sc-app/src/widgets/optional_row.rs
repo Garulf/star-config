@@ -1,8 +1,9 @@
 use super::change_marker::change_marker;
-use super::controls::button;
+use super::icon::icon_toned;
 use super::typography::{hint, label};
-use crate::theme::{self, ButtonKind, layout, size, space};
-use iced::widget::{Column, Space, container, row, text};
+use crate::icons;
+use crate::theme::{self, Tone, layout, size, space};
+use iced::widget::{Column, Space, button, container, row, text, tooltip};
 use iced::{Alignment, Element, Length, Padding};
 
 const ROW_PADDING: Padding = Padding {
@@ -13,6 +14,7 @@ const ROW_PADDING: Padding = Padding {
 };
 
 const NOT_SET: &str = "Not set. The game uses its default.";
+pub const REMOVE_HINT: &str = "Remove from the file so the game uses its default";
 
 /// What a changed setting held on disk before the staged edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,12 +44,12 @@ pub struct OptionalRow<'a, M> {
     pub set: bool,
     /// `Some` when the staged value differs from the file.
     pub was: Option<Was>,
-    /// The message that stages the removal. Shown as a Remove button when the setting is set.
+    /// The message that stages the removal. Shown as a quiet icon button when the setting is set.
     pub remove: Option<M>,
 }
 
 /// One setting with its control, a `Not set` caption when the file lacks it, the change
-/// marker with the earlier value, and a Remove button that sends the game back to its default.
+/// marker with the earlier value, and a quiet remove button that sends the game back to its default.
 pub fn optional_row<'a, M: Clone + 'a>(
     row_data: OptionalRow<'a, M>,
     control: impl Into<Element<'a, M>>,
@@ -55,7 +57,7 @@ pub fn optional_row<'a, M: Clone + 'a>(
     let changed = row_data.was.is_some();
     let labels = labels(&row_data).width(Length::Fill);
     let action: Element<'a, M> = match row_data.remove.filter(|_| row_data.set) {
-        Some(remove) => button("Remove", ButtonKind::Ghost, Some(remove)),
+        Some(remove) => remove_button(remove),
         None => Space::new().into(),
     };
     container(
@@ -78,6 +80,20 @@ pub fn optional_row<'a, M: Clone + 'a>(
     )
     .padding(ROW_PADDING)
     .width(Length::Fill)
+    .into()
+}
+
+fn remove_button<'a, M: Clone + 'a>(remove: M) -> Element<'a, M> {
+    tooltip(
+        button(icon_toned(icons::UNDO, layout::ICON, Tone::Muted))
+            .padding(space::SM)
+            .style(theme::ghost)
+            .on_press(remove),
+        container(hint(REMOVE_HINT))
+            .padding(space::SM)
+            .style(theme::toast),
+        tooltip::Position::Left,
+    )
     .into()
 }
 

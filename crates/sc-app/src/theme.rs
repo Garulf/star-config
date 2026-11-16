@@ -38,8 +38,8 @@ pub mod layout {
     pub const BOTTOMBAR_HEIGHT: f32 = 56.0;
     pub const CONTENT_MAX_WIDTH: f32 = 960.0;
     pub const CONTROL_WIDTH: f32 = 240.0;
-    /// The slot right of a control that holds a row action such as Remove.
-    pub const ROW_ACTION_WIDTH: f32 = 88.0;
+    /// The slot right of a control that holds a row action such as the remove icon.
+    pub const ROW_ACTION_WIDTH: f32 = 32.0;
     /// A dense list row that holds a text field.
     pub const EDIT_ROW_HEIGHT: f32 = 48.0;
     pub const NUMBER_WIDTH: f32 = 96.0;
