@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub type Hash = [u8; 32];
 
@@ -47,15 +48,28 @@ fn link_destination(path: &Path) -> PathBuf {
     }
 }
 
-fn temp_path(target: &Path) -> PathBuf {
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn create_temp(target: &Path) -> std::io::Result<(PathBuf, fs::File)> {
     let name = target.file_name().unwrap_or_default().to_string_lossy();
-    target.with_file_name(format!(".{name}.star-config.tmp"))
+    loop {
+        let number = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temp = target.with_file_name(format!(
+            ".{name}.{}-{number}.star-config.tmp",
+            std::process::id()
+        ));
+        match fs::File::options().write(true).create_new(true).open(&temp) {
+            Ok(file) => return Ok((temp, file)),
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
 }
 
-fn write_temp(temp: &Path, target: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut file = fs::File::create(temp)?;
+fn fill_temp(mut file: fs::File, temp: &Path, target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.write_all(bytes)?;
     file.sync_all()?;
+    drop(file);
     if let Ok(meta) = fs::metadata(target) {
         let _ = fs::set_permissions(temp, meta.permissions());
     }
@@ -63,14 +77,24 @@ fn write_temp(temp: &Path, target: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-fn sync_dir(dir: &Path) {
+pub(crate) fn sync_dir(dir: &Path) {
     if let Ok(handle) = fs::File::open(dir) {
         let _ = handle.sync_all();
     }
 }
 
+// std cannot open a folder for FlushFileBuffers on Windows; renames there rely on NTFS's log.
 #[cfg(not(unix))]
-fn sync_dir(_dir: &Path) {}
+pub(crate) fn sync_dir(_dir: &Path) {}
+
+/// Flushes a file someone else wrote, such as the result of `fs::copy`, to disk.
+pub(crate) fn sync_file(path: &Path) -> std::io::Result<()> {
+    fs::File::options()
+        .read(true)
+        .write(cfg!(windows))
+        .open(path)?
+        .sync_all()
+}
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let target = link_destination(path);
@@ -78,8 +102,8 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(dir) = parent {
         fs::create_dir_all(dir).map_err(|err| Error::io(path, err))?;
     }
-    let temp = temp_path(&target);
-    let written = write_temp(&temp, &target, bytes).and_then(|()| fs::rename(&temp, &target));
+    let (temp, file) = create_temp(&target).map_err(|err| Error::io(path, err))?;
+    let written = fill_temp(file, &temp, &target, bytes).and_then(|()| fs::rename(&temp, &target));
     if let Err(err) = written {
         let _ = fs::remove_file(&temp);
         return Err(Error::io(path, err));
@@ -205,6 +229,25 @@ mod tests {
         assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
         assert_eq!(fs::read(&real).unwrap(), b"new");
         assert_eq!(names(dir.path()), ["elsewhere", "user.cfg"]);
+    }
+
+    #[test]
+    fn concurrent_writes_leave_one_whole_version_and_no_temp() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        let versions: Vec<Vec<u8>> = (0..8u8).map(|n| vec![b'a' + n; 256 * 1024]).collect();
+        std::thread::scope(|scope| {
+            for bytes in &versions {
+                let path = &path;
+                scope.spawn(move || {
+                    for _ in 0..20 {
+                        write_atomic(path, bytes).unwrap();
+                    }
+                });
+            }
+        });
+        assert!(versions.contains(&fs::read(&path).unwrap()));
+        assert_eq!(names(dir.path()), ["settings.toml"]);
     }
 
     #[test]
