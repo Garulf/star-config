@@ -9,10 +9,11 @@ use sc_core::install::Channel;
 use std::io::ErrorKind;
 use std::path::Path;
 
+pub use crate::screens::words::words;
+use crate::screens::words::{ROLLBACK_FAILED, io_words};
+
 pub const CLOSE_GAME: &str = "Close the game before restoring.";
 const GONE: &str = "That snapshot is gone. It may have been deleted.";
-const ROLLBACK_FAILED: &str =
-    "Some files may have changed. The snapshot on the Backups screen holds the originals.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileState {
@@ -171,30 +172,6 @@ fn failed_file(err: &Error, channel: &Channel) -> String {
     match err {
         Error::Io { path, source } => format!("{} ({})", rel_name(channel, path), io_words(source)),
         other => words(other),
-    }
-}
-
-fn io_words(err: &std::io::Error) -> String {
-    match err.kind() {
-        ErrorKind::PermissionDenied => "permission denied".to_string(),
-        ErrorKind::NotFound => "it is missing".to_string(),
-        ErrorKind::StorageFull => "the disk is full".to_string(),
-        ErrorKind::ReadOnlyFilesystem => "the disk is read-only".to_string(),
-        _ => err.to_string(),
-    }
-}
-
-/// A core error in words for the user, without paths outside the game folder.
-pub fn words(err: &Error) -> String {
-    match err {
-        Error::Io { path, source } => {
-            let name = path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string());
-            format!("{name}: {}", io_words(source))
-        }
-        other => other.to_string(),
     }
 }
 

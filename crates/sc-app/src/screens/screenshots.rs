@@ -11,6 +11,7 @@ pub use share::{Clipboard, ClipboardCell, Copied, CopyError, FileAction, NO_CLIP
 
 use super::backups::when;
 use super::units;
+use super::words::words;
 use crate::context::Context;
 use crate::screen::{Action, Confirm, Toast};
 use crate::theme::ButtonKind;
@@ -682,8 +683,9 @@ impl State {
         let reveal = self.services.reveal.clone();
         Action::task(work::background(
             move || -> Result<PathBuf, String> {
-                let saved = screenshots::save_share_copy(&path, &archive, max_bytes, max_edge)
-                    .map_err(|err| err.to_string())?;
+                let saved =
+                    decoded(|| screenshots::save_share_copy(&path, &archive, max_bytes, max_edge))
+                        .map_err(|err| words(&err))?;
                 if let Some(folder) = saved.parent() {
                     let _ = reveal(folder);
                 }
@@ -725,7 +727,7 @@ impl State {
         };
         let path = index_path(ctx);
         Action::task(work::background(
-            move || index.save(&path).map_err(|err| err.to_string()),
+            move || index.save(&path).map_err(|err| words(&err)),
             Message::IndexSaved,
         ))
     }
@@ -760,7 +762,7 @@ impl State {
         let path = viewer.path.clone();
         let from = path.clone();
         Action::task(work::background(
-            move || screenshots::rename(&path, &stem).map_err(|err| sentence(&err.to_string())),
+            move || screenshots::rename(&path, &stem).map_err(|err| sentence(&words(&err))),
             move |result| Message::Renamed(from, result),
         ))
     }
@@ -917,6 +919,18 @@ impl Default for State {
     }
 }
 
+/// Runs an image decoder, which can panic on a damaged file, and treats a panic as a file
+/// that cannot be read.
+pub(crate) fn decoded<T>(
+    decode: impl FnOnce() -> sc_core::error::Result<T>,
+) -> sc_core::error::Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(decode)).unwrap_or_else(|_| {
+        Err(sc_core::error::Error::Invalid(
+            "the picture is damaged and cannot be read".into(),
+        ))
+    })
+}
+
 fn index_path(ctx: &Context) -> PathBuf {
     ctx.dirs.data.join(INDEX_FILE)
 }
@@ -925,17 +939,19 @@ pub(crate) fn make_thumbs(paths: Vec<PathBuf>, cache: &Path) -> Vec<(PathBuf, Op
     paths
         .into_iter()
         .map(|path| {
-            let handle = screenshots::thumbnail(&path, cache, THUMB_EDGE)
-                .and_then(|thumb| screenshots::load_rgba(&thumb))
-                .ok()
-                .map(|rgba| Handle::from_rgba(rgba.width, rgba.height, rgba.pixels));
+            let handle = decoded(|| {
+                screenshots::thumbnail(&path, cache, THUMB_EDGE)
+                    .and_then(|thumb| screenshots::load_rgba(&thumb))
+            })
+            .ok()
+            .map(|rgba| Handle::from_rgba(rgba.width, rgba.height, rgba.pixels));
             (path, handle)
         })
         .collect()
 }
 
 fn load_picture(path: &Path) -> Result<Picture, String> {
-    let rgba = screenshots::load_rgba(path).map_err(|err| err.to_string())?;
+    let rgba = decoded(|| screenshots::load_rgba(path)).map_err(|err| words(&err))?;
     Ok(Picture {
         width: rgba.width,
         height: rgba.height,
@@ -961,7 +977,7 @@ fn archive_all(
                     failure: Some(format!(
                         "Could not archive {}. {}",
                         file_name(&from),
-                        sentence(&err.to_string())
+                        sentence(&words(&err))
                     )),
                 };
             }
@@ -1030,5 +1046,17 @@ fn trashed_toast(outcome: &Trashed) -> Toast {
             "Moved {done} of {} to the trash. {failure}",
             outcome.asked
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decoded;
+
+    #[test]
+    fn a_decoder_that_panics_reads_as_a_damaged_picture() {
+        let result: sc_core::error::Result<()> = decoded(|| panic!("bad huffman table"));
+        let err = result.unwrap_err();
+        assert!(crate::screens::words::words(&err).contains("the picture is damaged"));
     }
 }

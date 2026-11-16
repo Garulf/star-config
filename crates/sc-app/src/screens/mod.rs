@@ -12,3 +12,4 @@ pub mod settings;
 pub mod starstrings;
 mod typed;
 mod units;
+mod words;

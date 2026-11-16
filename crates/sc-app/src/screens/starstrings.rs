@@ -1,5 +1,6 @@
 use super::backups::when;
 use super::units;
+use super::words::words;
 use crate::context::Context;
 use crate::icons;
 use crate::screen::{Action, Confirm, Origin, Screen, Toast, ToastKind};
@@ -47,7 +48,7 @@ impl Failure {
     fn from_error(err: &Error, doing: Doing) -> Self {
         Self {
             message: plain_message(err, doing),
-            detail: err.to_string(),
+            detail: words(err),
         }
     }
 }

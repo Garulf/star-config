@@ -10,7 +10,8 @@ pub use source::{CURRENT_LABEL, Source, SourceChoice, UNRECOGNISED, layout_name}
 use crate::context::Context;
 use crate::screen::{Action, Confirm, Origin, Toast};
 use crate::screens::backups::words;
-use crate::screens::edits::FORMAT_CHANGED;
+use crate::screens::edits::{CHANGED_ON_DISK, FORMAT_CHANGED};
+use crate::screens::words::{GAME_RUNNING, ROLLBACK_FAILED};
 use crate::theme::ButtonKind;
 use crate::widgets::VirtualListState;
 use crate::work;
@@ -32,14 +33,10 @@ pub const UNBIND_CAPTION: &str =
 pub const ADD_CAPTION: &str = "For actions that have no bind in this file yet. Use the action's name as the game writes it, for example v_toggle_mining_mode.";
 pub const CAPTURE_PROMPT: &str = "Press a key or a mouse button";
 pub const UNKNOWN_KEY: &str = "This key has no known name. Type it below.";
-pub const CHANGED_AGAIN: &str =
-    "The file changed on disk. Your edits were kept. Check them and apply again.";
+pub const CHANGED_AGAIN: &str = CHANGED_ON_DISK;
 pub const EMPTY_TITLE: &str = "No keybinds yet";
 pub const EMPTY_BODY: &str = "Change any bind in the game once, or export a profile from Options, Keybindings, Control Profiles. It shows up here after that.";
-pub const CLOSE_TO_APPLY: &str =
-    "Close Star Citizen before applying changes to your current binds.";
-const ROLLBACK_FAILED: &str =
-    "Some files may have changed. The snapshot on the Backups screen holds the originals.";
+pub const CLOSE_TO_APPLY: &str = GAME_RUNNING;
 const KEYBOARD_ONLY: &str = "Press a key. Mouse buttons go in the Mouse column.";
 const MOUSE_ONLY: &str =
     "Press a mouse button or turn the wheel over this box. Keys go in the Keyboard column.";
@@ -892,7 +889,10 @@ fn failure_toast(what: &str, failure: &WriteFailure) -> Toast {
     match failure {
         WriteFailure::RollbackFailed => Toast::error(ROLLBACK_FAILED),
         WriteFailure::GameRunning => Toast::error(CLOSE_TO_APPLY),
-        WriteFailure::ChangedAgain | WriteFailure::Exists => Toast::info(CHANGED_AGAIN),
+        WriteFailure::ChangedAgain => Toast::info(CHANGED_AGAIN),
+        WriteFailure::Exists => {
+            Toast::error(format!("{what}: a layout with this name already exists."))
+        }
         WriteFailure::NoLongerApply(count) => Toast::info(removed_text(*count)),
         WriteFailure::Unrecognised => Toast::error(FORMAT_CHANGED),
         WriteFailure::Failed(reason) => Toast::error(format!("{what}: {reason}")),
@@ -923,6 +923,15 @@ mod tests {
         );
         let toast = failure_toast("x", &WriteFailure::NoLongerApply(1));
         assert!(toast.text.contains("so it was removed"), "{}", toast.text);
+    }
+
+    #[test]
+    fn an_existing_layout_is_not_called_a_change_on_disk() {
+        let toast = failure_toast("Could not save the layout", &WriteFailure::Exists);
+        assert_eq!(
+            toast.text,
+            "Could not save the layout: a layout with this name already exists."
+        );
     }
 
     #[test]

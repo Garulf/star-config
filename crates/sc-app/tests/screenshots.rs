@@ -943,3 +943,28 @@ fn a_scan_of_another_install_is_not_shown() {
     screen.run(scan);
     assert!(screen.has(EMPTY_BODY));
 }
+
+#[test]
+fn damaged_pictures_show_as_unreadable_tiles() {
+    let mut screen = Harness::new();
+    let jpeg = screen.folder("LIVE").join(shot_name(0, 9, 0));
+    testkit::space_scene(&jpeg, 320, 180, 7);
+    let bytes = fs::read(&jpeg).unwrap();
+    fs::write(&jpeg, &bytes[..bytes.len() / 3]).unwrap();
+    let png_name = shot_name(0, 9, 5).replace(".jpg", ".png");
+    let picture = image::RgbImage::from_pixel(320, 180, image::Rgb([20, 30, 60]));
+    let mut png = Vec::new();
+    picture
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    screen.file(
+        "LIVE",
+        &png_name,
+        &png[..png.len() / 2],
+        local_unix(0, 9, 5),
+    );
+    screen.reload();
+    assert!(screen.has_part("2 screenshots, "));
+    assert!(screen.has(&png_name));
+    assert!(jpeg.exists());
+}

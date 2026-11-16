@@ -4,6 +4,7 @@ mod text_check;
 use super::attr_edit::{self, AttrFile, Doc};
 use super::edits::{self, Carry, Edits, Pending, Target, Written, changed_keys};
 use super::typed::{self, Kind};
+use super::words::{GAME_RUNNING, words};
 use crate::context::Context;
 use crate::screen::{Action, Origin, Screen, Toast, ToastKind};
 use crate::theme::{self, ButtonKind, layout, size, space};
@@ -30,7 +31,6 @@ const MISSING_CFG: &str = "This channel has no user.cfg yet. Applying a change c
 const GAME_CAPTION: &str = "Every setting the game stores for this channel. Head tracking and comms have their own screen.";
 const NOT_UTF8: &str = "This file has characters that are not UTF-8, so it can only be edited as settings, not as text.";
 const OTHER_LINES: &str = "Other lines in this file";
-const READ_ONLY: &str = "Close Star Citizen to apply these changes. Your edits were kept.";
 const TEXT_KEY: &str = "\u{0}text";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,7 +146,7 @@ pub enum Message {
 fn load(channel: &Channel) -> Loaded {
     let cfg = match Staged::<UserCfg>::open(&channel.user_cfg()) {
         Ok(staged) => CfgFile::Ready(Edits::new(staged, count_cfg)),
-        Err(err) => CfgFile::Unreadable(format!("user.cfg cannot be read: {err}")),
+        Err(err) => CfgFile::Unreadable(format!("user.cfg cannot be read: {}", words(&err))),
     };
     Loaded {
         channel: channel.dir.clone(),
@@ -234,7 +234,7 @@ fn was(base: Option<&str>, current: Option<&str>) -> Option<Was> {
 }
 
 fn stage_error(err: &sc_core::error::Error) -> Toast {
-    Toast::error(format!("That change cannot be made: {err}."))
+    Toast::error(format!("That change cannot be made: {}.", words(err)))
 }
 
 impl State {
@@ -445,7 +445,7 @@ impl State {
             return Action::none();
         }
         if ctx.read_only() {
-            return Action::toast(Toast::info(READ_ONLY));
+            return Action::toast(Toast::error(GAME_RUNNING));
         }
         if let Some(problem) = self.text_problem() {
             return Action::toast(Toast::info(problem));

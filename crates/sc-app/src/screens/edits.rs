@@ -1,6 +1,7 @@
 //! Staged edits that keep showing while a background write runs, and the guarded write
 //! that replays them once when another writer changed the file first.
 
+use super::words::{GAME_RUNNING, ROLLBACK_FAILED, words};
 use crate::screen::{Origin, Toast};
 use sc_core::backup::{Scope, SnapshotInfo};
 use sc_core::error::{Error, Result};
@@ -368,15 +369,11 @@ pub fn failure_toast(err: &Error) -> Toast {
     match err {
         Error::ChangedOnDisk { .. } => Toast::info(CHANGED_ON_DISK),
         Error::Invalid(message) if message == FORMAT_CHANGED => Toast::error(FORMAT_CHANGED),
-        Error::GameRunning => {
-            Toast::error("Star Citizen is running, so nothing was written. Your edits were kept.")
-        }
-        Error::RollbackFailed { .. } => Toast::error(
-            "Writing failed, and putting the earlier files back failed too. Some files may \
-             have changed. The snapshot on the Backups screen holds the originals.",
-        ),
+        Error::GameRunning => Toast::error(GAME_RUNNING),
+        Error::RollbackFailed { .. } => Toast::error(ROLLBACK_FAILED),
         other => Toast::error(format!(
-            "Could not apply the changes: {other}. Your edits were kept."
+            "Could not apply the changes: {}. Your edits were kept.",
+            words(other)
         )),
     }
 }
@@ -554,6 +551,19 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn apply_errors_name_the_file_without_its_path_or_code() {
+        let err = Error::Io {
+            path: PathBuf::from("/home/someone/Games/StarCitizen/LIVE/user.cfg"),
+            source: std::io::Error::from_raw_os_error(13),
+        };
+        let toast = failure_toast(&err);
+        assert_eq!(
+            toast.text,
+            "Could not apply the changes: user.cfg: permission denied. Your edits were kept."
+        );
     }
 
     #[test]

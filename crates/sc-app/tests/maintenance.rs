@@ -365,7 +365,9 @@ fn everything_disabled_while_game_runs() {
     assert_eq!(screen.store().list().len(), 1);
 
     screen.ctx.game = RunState::Unknown;
-    assert!(screen.has(BLOCKED));
+    assert!(screen.has(
+        "star-config cannot tell whether Star Citizen is running. Close the game to change shader caches."
+    ));
     assert_eq!(screen.click("Clear"), 0);
 }
 

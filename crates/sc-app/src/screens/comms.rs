@@ -1,6 +1,7 @@
 use super::attr_edit::{self, AttrFile, Doc};
 use super::edits::{self, Carry, Edits, Pending, Target, Written};
 use super::typed::{self, Kind};
+use super::words::{GAME_RUNNING, words};
 use crate::context::Context;
 use crate::screen::{Action, Origin, Screen, Toast, ToastKind};
 use crate::theme::{ButtonKind, layout, space};
@@ -23,7 +24,6 @@ const SOURCE: &str = "HeadtrackingSource";
 const SOURCE_HINT: &str = "Which tracker the game uses. What each number means has not been confirmed, so this is the number stored in the file.";
 const OTHER_SETTINGS: &str = "Other settings in this file";
 const ELSEWHERE: &str = "This name has no head tracking or comms word in it, so it will be listed on the Config screen under Game settings.";
-const READ_ONLY: &str = "Close Star Citizen to apply these changes. Your edits were kept.";
 
 pub struct Loaded {
     channel: PathBuf,
@@ -177,7 +177,10 @@ impl State {
         };
         match edits.stage(op, merge) {
             Ok(()) => Action::none(),
-            Err(err) => Action::toast(Toast::error(format!("That change cannot be made: {err}."))),
+            Err(err) => Action::toast(Toast::error(format!(
+                "That change cannot be made: {}.",
+                words(&err)
+            ))),
         }
     }
 
@@ -213,7 +216,7 @@ impl State {
             return Action::none();
         }
         if ctx.read_only() {
-            return Action::toast(Toast::info(READ_ONLY));
+            return Action::toast(Toast::error(GAME_RUNNING));
         }
         let (Some(scope), Some(channel)) = (ctx.scope(), ctx.channel.clone()) else {
             return Action::none();

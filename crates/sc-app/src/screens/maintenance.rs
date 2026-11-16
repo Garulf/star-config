@@ -1,5 +1,6 @@
 use super::backups::when;
 use super::units;
+use super::words::words;
 use crate::context::Context;
 use crate::screen::{Action, Confirm, Screen, Toast, ToastKind};
 use crate::theme::{self, ButtonKind, Tone, layout, space};
@@ -25,6 +26,7 @@ const UNMATCHED_HINT: &str =
 const SAME_DISK_CAPTION: &str = "A backup on the same disk frees no space. Only Clear does.";
 const INTERRUPTED: &str = "This backup was interrupted and may be missing files.";
 const BLOCKED: &str = "Close the game to change shader caches.";
+const BLOCKED_UNKNOWN: &str = "star-config cannot tell whether Star Citizen is running. Close the game to change shader caches.";
 const CALCULATING: &str = "Calculating...";
 const UNVERSIONED: &str = "unversioned";
 const STAR_CITIZEN_DIR: &str = "Star Citizen";
@@ -194,7 +196,12 @@ impl State {
         }
         let mut body = Column::new().spacing(space::XL);
         if blocked(ctx) {
-            body = body.push(banner(ToastKind::Warning, BLOCKED, None));
+            let text = if ctx.game == RunState::Unknown {
+                BLOCKED_UNKNOWN
+            } else {
+                BLOCKED
+            };
+            body = body.push(banner(ToastKind::Warning, text, None));
         }
         body = body.push(self.summary()).push(self.caches_section(ctx));
         if self.layer_caches().next().is_some() {
@@ -646,11 +653,14 @@ fn plain(err: &Error) -> String {
             "Star Citizen is running. Close the game to change shader caches.".into()
         }
         Error::NotFound(_) => "It is no longer there. The list has been refreshed.".into(),
-        Error::Io { path, .. } => format!(
-            "{} could not be changed. Check that nothing else is using it. ({err})",
-            path.display()
+        Error::Io { .. } => format!(
+            "A file could not be changed ({}). Check that nothing else is using it.",
+            words(err)
         ),
-        _ => format!("star-config stopped to keep your files safe: {err}."),
+        _ => format!(
+            "star-config stopped to keep your files safe: {}.",
+            words(err)
+        ),
     }
 }
 

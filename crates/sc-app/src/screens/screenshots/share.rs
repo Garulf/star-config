@@ -1,5 +1,7 @@
 //! The clipboard, the trash and the file manager, behind seams tests can replace.
 
+use super::decoded;
+use crate::screens::words::words;
 use sc_core::screenshots;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -132,7 +134,8 @@ pub enum Copied {
 }
 
 pub fn copy_image(clipboard: &ClipboardCell, path: &Path) -> Result<Copied, CopyError> {
-    let rgba = screenshots::load_rgba(path).map_err(|err| CopyError::Failed(err.to_string()))?;
+    let rgba =
+        decoded(|| screenshots::load_rgba(path)).map_err(|err| CopyError::Failed(words(&err)))?;
     clipboard
         .put(|board| board.set_image(rgba.width as usize, rgba.height as usize, rgba.pixels))?;
     Ok(Copied::Image)
@@ -145,8 +148,8 @@ pub fn copy_smaller(
     max_edge: u32,
 ) -> Result<Copied, CopyError> {
     let failed = |err: String| CopyError::Failed(err);
-    let copy =
-        screenshots::share_copy(path, max_bytes, max_edge).map_err(|e| failed(e.to_string()))?;
+    let copy = decoded(|| screenshots::share_copy(path, max_bytes, max_edge))
+        .map_err(|e| failed(words(&e)))?;
     let rgba = image::load_from_memory_with_format(&copy.jpeg, image::ImageFormat::Jpeg)
         .map_err(|e| failed(e.to_string()))?
         .into_rgba8();

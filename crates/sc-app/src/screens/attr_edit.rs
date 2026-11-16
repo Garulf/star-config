@@ -3,6 +3,7 @@
 
 use super::edits::{Edits, changed_keys};
 use super::units::thousands;
+use super::words::words;
 use crate::screen::ToastKind;
 use crate::theme::{self, layout, size, space};
 use crate::widgets::{banner, change_marker, divider, hint, label, text_field};
@@ -119,7 +120,7 @@ pub fn load(path: &Path) -> AttrFile {
                 }
             }
         }
-        Err(err) => AttrFile::Unreadable(format!("attributes.xml cannot be read: {err}")),
+        Err(err) => AttrFile::Unreadable(format!("attributes.xml cannot be read: {}", words(&err))),
     }
 }
 
