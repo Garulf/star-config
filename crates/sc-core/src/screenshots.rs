@@ -1,7 +1,7 @@
 //! Screenshot browsing, thumbnails, archive and share copies.
 use crate::error::{Error, Result};
 use crate::install::Channel;
-use crate::safe_write::write_atomic;
+use crate::safe_write::{self, write_atomic};
 use crate::settings::ArchiveMode;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
@@ -302,17 +302,29 @@ fn is_inside(path: &Path, dir: &Path) -> bool {
     real(path).starts_with(real(dir))
 }
 
+/// `to` must not exist beforehand: on any failure it is removed and `from` is left alone.
 fn move_across_devices(from: &Path, to: &Path) -> Result<()> {
+    if let Err(err) = durable_copy(from, to) {
+        let _ = fs::remove_file(to);
+        return Err(err);
+    }
+    fs::remove_file(from).map_err(|err| Error::io(from, err))
+}
+
+fn durable_copy(from: &Path, to: &Path) -> Result<()> {
     let expected = fs::copy(from, to).map_err(|err| Error::io(from, err))?;
     let copied = fs::metadata(to).map_err(|err| Error::io(to, err))?.len();
     if copied != expected {
-        let _ = fs::remove_file(to);
         return Err(Error::Invalid(format!(
             "{}: copy is {copied} bytes, expected {expected}",
             to.display()
         )));
     }
-    fs::remove_file(from).map_err(|err| Error::io(from, err))
+    safe_write::sync_file(to).map_err(|err| Error::io(to, err))?;
+    if let Some(dir) = to.parent() {
+        safe_write::sync_dir(dir);
+    }
+    Ok(())
 }
 
 pub fn archive(path: &Path, archive_dir: &Path, mode: ArchiveMode) -> Result<PathBuf> {
@@ -764,6 +776,33 @@ mod tests {
         assert_eq!(copied_to, archive.join("c.jpg"));
         assert!(copied.exists());
         assert_eq!(fs::read(&copied_to).unwrap(), b"copy");
+    }
+
+    #[test]
+    fn move_across_devices_copies_then_removes_the_source() {
+        let dir = tempdir().unwrap();
+        let from = dir.path().join("a.jpg");
+        let to = dir.path().join("archive/a.jpg");
+        fs::create_dir_all(to.parent().unwrap()).unwrap();
+        fs::write(&from, b"shot").unwrap();
+        move_across_devices(&from, &to).unwrap();
+        assert!(!from.exists());
+        assert_eq!(fs::read(&to).unwrap(), b"shot");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn move_across_devices_keeps_the_source_when_the_copy_fails() {
+        use crate::safe_write::testing::ReadOnly;
+        let dir = tempdir().unwrap();
+        let from = dir.path().join("a.jpg");
+        let archive = dir.path().join("archive");
+        fs::create_dir_all(&archive).unwrap();
+        fs::write(&from, b"shot").unwrap();
+        let _guard = ReadOnly::new(&archive);
+        assert!(move_across_devices(&from, &archive.join("a.jpg")).is_err());
+        assert_eq!(fs::read(&from).unwrap(), b"shot");
+        assert!(!archive.join("a.jpg").exists());
     }
 
     #[test]

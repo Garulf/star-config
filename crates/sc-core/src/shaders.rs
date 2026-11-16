@@ -2,6 +2,7 @@
 use crate::error::{Error, Result};
 use crate::install::{Install, InstallKind, resolve_ci};
 use crate::process::{GameProbe, RunState};
+use crate::safe_write::{self, write_atomic};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::ErrorKind;
@@ -404,6 +405,9 @@ pub struct ShaderBackup {
     pub size: u64,
     pub path: PathBuf,
     pub created_unix: i64,
+    /// False while the data is still being moved in, or when that move was interrupted. An
+    /// incomplete backup can be deleted but not restored.
+    pub complete: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -417,6 +421,13 @@ struct BackupMeta {
     size: u64,
     created_unix: i64,
     original: String,
+    #[serde(default)]
+    complete: bool,
+}
+
+fn write_meta(path: &Path, meta: &BackupMeta) -> Result<()> {
+    let text = toml::to_string(meta).map_err(|err| Error::Invalid(err.to_string()))?;
+    write_atomic(path, text.as_bytes())
 }
 
 fn plain_component(text: &str) -> bool {
@@ -463,6 +474,7 @@ fn file_listing(root: &Path) -> Result<Vec<(PathBuf, u64)>> {
 }
 
 fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
+    let mut dirs = Vec::new();
     for entry in WalkDir::new(source).follow_links(false) {
         let entry = entry.map_err(|err| Error::Invalid(err.to_string()))?;
         let relative = entry.path().strip_prefix(source).unwrap_or(Path::new(""));
@@ -474,9 +486,17 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
         let kind = entry.file_type();
         if kind.is_dir() {
             fs::create_dir_all(&target).map_err(|err| Error::io(&target, err))?;
+            dirs.push(target);
         } else if kind.is_file() {
             fs::copy(entry.path(), &target).map_err(|err| Error::io(&target, err))?;
+            safe_write::sync_file(&target).map_err(|err| Error::io(&target, err))?;
         }
+    }
+    for dir in dirs.iter().rev() {
+        safe_write::sync_dir(dir);
+    }
+    if let Some(parent) = destination.parent() {
+        safe_write::sync_dir(parent);
     }
     Ok(())
 }
@@ -550,16 +570,22 @@ impl ShaderBackups {
             .filter(|name| kind.recognises(name) && plain_component(name))
             .ok_or_else(|| invalid("unrecognised cache name"))?;
         let path = dir.join(name);
-        if fs::symlink_metadata(&path).is_err() {
+        if meta.complete && fs::symlink_metadata(&path).is_err() {
             return Err(invalid("backup data is missing"));
         }
+        let size = if meta.complete {
+            meta.size
+        } else {
+            tree_size(&path)
+        };
         Ok(ShaderBackup {
             id: id.to_string(),
             version: version.to_string(),
             kind,
-            size: meta.size,
+            size,
             path,
             created_unix: meta.created_unix,
+            complete: meta.complete,
         })
     }
 
@@ -606,24 +632,31 @@ impl ShaderBackups {
         let size = tree_size(&cache.path);
         let (id, dir, created_unix) = self.fresh_id_dir(version)?;
         let stored = dir.join(name);
-        if let Err(err) = move_tree(&cache.path, &stored) {
-            let _ = fs::remove_dir(&dir);
-            return Err(err);
-        }
-        let meta = BackupMeta {
+        let meta_path = dir.join(BACKUP_META);
+        let mut meta = BackupMeta {
             kind: cache.kind.label().to_string(),
             size,
             created_unix,
             original: cache.path.to_string_lossy().into_owned(),
+            complete: false,
         };
-        let text = toml::to_string(&meta).map_err(|err| Error::Invalid(err.to_string()))?;
-        let meta_path = dir.join(BACKUP_META);
-        fs::write(&meta_path, text).map_err(|err| {
+        if let Err(err) = write_meta(&meta_path, &meta) {
+            let _ = fs::remove_dir(&dir);
+            return Err(err);
+        }
+        if let Err(err) = move_tree(&cache.path, &stored) {
+            if fs::symlink_metadata(&stored).is_err() {
+                let _ = fs::remove_file(&meta_path);
+                let _ = fs::remove_dir(&dir);
+            }
+            return Err(err);
+        }
+        meta.complete = true;
+        write_meta(&meta_path, &meta).map_err(|err| {
             Error::Invalid(format!(
-                "moved {} to {} but could not write {}: {err}",
+                "moved {} to {} but could not mark the backup complete, so it is listed as incomplete: {err}",
                 cache.path.display(),
                 stored.display(),
-                meta_path.display()
             ))
         })?;
         Ok(ShaderBackup {
@@ -633,6 +666,7 @@ impl ShaderBackups {
             size,
             path: stored,
             created_unix,
+            complete: true,
         })
     }
 
@@ -663,6 +697,12 @@ impl ShaderBackups {
         probe: &dyn GameProbe,
     ) -> Result<PathBuf> {
         let stored = self.read(&backup.version, &backup.id)?;
+        if !stored.complete {
+            return Err(Error::Invalid(format!(
+                "backup {}/{} is incomplete; delete it instead",
+                stored.version, stored.id
+            )));
+        }
         let name = stored
             .path
             .file_name()
@@ -1163,6 +1203,51 @@ mod tests {
         );
         assert!(store.list().is_empty());
         assert_eq!(store.total_size(), 0);
+    }
+
+    #[test]
+    fn list_reports_an_incomplete_backup_which_can_be_deleted_but_not_restored() {
+        let fx = fixture();
+        let store = backups(&fx);
+        let dir = fx.tmp.path().join("backups/v1/20250101T000000Z");
+        write(&dir.join("shaders/a.bin"), 3);
+        let meta = BackupMeta {
+            kind: CacheKind::Shaders.label().to_string(),
+            size: 99,
+            created_unix: 1,
+            original: fx.sc.join("v1/shaders").to_string_lossy().into_owned(),
+            complete: false,
+        };
+        write_meta(&dir.join(BACKUP_META), &meta).unwrap();
+        let listed = store.list();
+        assert_eq!(listed.len(), 1);
+        assert!(!listed[0].complete);
+        assert_eq!(listed[0].size, 3);
+        assert!(matches!(
+            store.restore(&listed[0], &fx.sc, &IDLE),
+            Err(Error::Invalid(_))
+        ));
+        assert!(dir.join("shaders/a.bin").exists());
+        store.delete(&listed[0]).unwrap();
+        assert!(store.list().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_and_clear_leaves_nothing_behind_when_the_move_fails() {
+        use crate::safe_write::testing::ReadOnly;
+        let fx = fixture();
+        let store = backups(&fx);
+        let cache = cache_at(&found(&fx), "sc-alpha-4.10.3_abc/shaders");
+        let result = {
+            let _guard = ReadOnly::new(cache.path.parent().unwrap());
+            store.backup_and_clear(&cache, &IDLE)
+        };
+        assert!(result.is_err());
+        assert!(cache.path.join("x.bin").exists());
+        assert!(store.list().is_empty());
+        let version_dir = fx.tmp.path().join("backups/sc-alpha-4.10.3_abc");
+        assert_eq!(fs::read_dir(version_dir).unwrap().count(), 0);
     }
 
     #[test]
