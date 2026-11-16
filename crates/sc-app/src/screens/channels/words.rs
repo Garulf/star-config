@@ -27,6 +27,7 @@ pub const PENDING_BLOCKS: &str =
 pub const STUCK_BLOCKS: &str = "Game file actions stay off until the unfinished swap is sorted out. Put the folders back by hand, then restart star-config.";
 pub const RESUME_BLOCKED: &str = "Close the game and the launcher to finish or undo the swap.";
 pub const RESUMING: &str = "Working on the swap...";
+pub const BUSY_BLOCKS: &str = "Wait until the copy or swap of game files has finished.";
 pub const NO_PARTS: &str = "Tick at least one part.";
 pub const STOPPING: &str = "Stopping after the current file...";
 

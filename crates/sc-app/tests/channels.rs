@@ -1022,3 +1022,77 @@ fn channels_pictures() {
         }
     }
 }
+
+const BUSY_BLOCKS: &str = "Wait until the copy or swap of game files has finished.";
+const STOPPING: &str = "Stopping after the current file...";
+
+#[test]
+fn settings_actions_wait_for_game_file_jobs_and_unfinished_swaps() {
+    let mut screen = Harness::loaded();
+    screen.plan();
+    let copy = screen.send_only(Message::StartCopy);
+    assert!(screen.has(BUSY_BLOCKS));
+    assert_eq!(screen.click("Copy settings"), 0);
+    assert_eq!(screen.click("Swap settings"), 0);
+    screen.run(copy);
+    assert_eq!(screen.click("Copy settings"), 1);
+
+    let mut screen = Harness::loaded();
+    assert_eq!(screen.click("Swap game files"), 1);
+    let swap = screen.send_only(Message::Swap);
+    assert!(screen.has(BUSY_BLOCKS));
+    assert_eq!(screen.click("Copy settings"), 0);
+    assert_eq!(screen.click("Swap settings"), 0);
+    screen.run(swap);
+
+    let mut screen = Harness::new();
+    interrupt_swap(&screen.ctx, 1);
+    screen.reload();
+    assert_eq!(screen.click("Copy settings"), 0);
+    assert_eq!(screen.click("Swap settings"), 0);
+}
+
+#[test]
+fn stop_and_switch_keeps_the_copy_locked_until_it_ends() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut ctx = fixture(temp.path());
+    let root = ctx.install.as_ref().unwrap().root.clone();
+    ctx.settings.installs.push(root);
+    let mut app = App::with(ctx);
+    testkit::feed(
+        &mut app,
+        [
+            app::Message::Navigate(Screen::Channels),
+            app::Message::Channels(Message::PlanCopy),
+        ],
+    );
+    let copy = app.update(app::Message::Channels(Message::StartCopy));
+    testkit::feed(
+        &mut app,
+        [
+            app::Message::PickChannel("PTU".into()),
+            app::Message::DialogAction(0),
+        ],
+    );
+    assert_eq!(app.context().channel.as_ref().unwrap().name, "PTU");
+    assert!(app.dialog().is_none(), "asked once");
+    let shows = |app: &App, text: &str| {
+        Simulator::with_size(sc_app::settings(), TALL, app.view())
+            .find(text)
+            .is_ok()
+    };
+    assert!(shows(&app, STOPPING));
+    testkit::feed(
+        &mut app,
+        [
+            app::Message::Channels(Message::PlanCopy),
+            app::Message::Channels(Message::AskSwap),
+            app::Message::PickChannel("LIVE".into()),
+        ],
+    );
+    assert!(shows(&app, STOPPING), "still locked");
+    assert_eq!(app.context().channel.as_ref().unwrap().name, "LIVE");
+    testkit::settle(&mut app, copy);
+    assert!(!shows(&app, STOPPING));
+    assert!(shows(&app, "Copy game files"));
+}

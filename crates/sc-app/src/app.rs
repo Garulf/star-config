@@ -357,7 +357,7 @@ impl App {
     }
 
     fn confirm_discard(&mut self, then: Message) -> Task<Message> {
-        if self.screens.channels.busy() {
+        if self.screens.channels.busy() && !self.screens.channels.stopping() {
             self.dialog = Some(
                 Confirm::new(
                     "A copy is running. Stop it and switch?",

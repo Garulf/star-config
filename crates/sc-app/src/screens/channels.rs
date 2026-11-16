@@ -204,16 +204,23 @@ impl State {
         )
     }
 
-    /// True while a copy runs. The shell asks before switching install or channel.
+    /// True while a copy runs, stopping or not. The shell asks before switching install or
+    /// channel.
     pub fn busy(&self) -> bool {
         matches!(self.copy, CopyStage::Running(_))
     }
 
-    /// Stops a running copy after the current file and forgets it.
+    /// True while a copy runs that was told to stop after the current file.
+    pub fn stopping(&self) -> bool {
+        matches!(&self.copy, CopyStage::Running(running) if running.stopping)
+    }
+
+    /// Asks a running copy to stop after the current file. It stays running until its
+    /// result arrives.
     pub fn stop_copy(&mut self) {
-        if let CopyStage::Running(running) = &self.copy {
+        if let CopyStage::Running(running) = &mut self.copy {
             running.cancel.store(true, Ordering::SeqCst);
-            self.copy = CopyStage::Idle;
+            running.stopping = true;
         }
     }
 
@@ -278,10 +285,7 @@ impl State {
             }
             Message::Copied(run, result) => self.copied(run, result),
             Message::CancelCopy => {
-                if let CopyStage::Running(running) = &mut self.copy {
-                    running.cancel.store(true, Ordering::SeqCst);
-                    running.stopping = true;
-                }
+                self.stop_copy();
                 Action::none()
             }
             Message::CloseCopy => {
@@ -704,6 +708,12 @@ impl State {
         let (from, to) = (self.from.as_deref()?, self.to.as_deref()?);
         if ctx.read_only() {
             return Some(words::SETTINGS_BLOCKED.to_string());
+        }
+        if self.locked() || self.resuming {
+            return Some(words::BUSY_BLOCKS.to_string());
+        }
+        if self.pending.is_some() {
+            return self.game_blocker(ctx).map(str::to_string);
         }
         if from.eq_ignore_ascii_case(to) {
             return Some(words::SAME_CHANNEL.to_string());
