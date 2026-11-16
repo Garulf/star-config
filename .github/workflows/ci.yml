@@ -27,6 +27,6 @@ jobs:
         with:
           name: star-config-${{ matrix.os }}
           path: |
-            target/release/sc-app
-            target/release/sc-app.exe
-          if-no-files-found: ignore
+            target/release/star-config
+            target/release/star-config.exe
+          if-no-files-found: error
