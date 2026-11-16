@@ -106,7 +106,7 @@ pub fn check_writable(dir: &Path) -> Result<()> {
     outcome.map_err(|err| Error::io(dir, err))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) mod testing {
     use std::path::{Path, PathBuf};
 
