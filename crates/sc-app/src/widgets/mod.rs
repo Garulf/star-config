@@ -6,6 +6,7 @@ mod data;
 mod empty_state;
 mod icon;
 mod nav_item;
+mod optional_row;
 mod page;
 mod section;
 mod setting_row;
@@ -28,6 +29,7 @@ pub use data::{
 pub use empty_state::{empty_state, empty_state_icon};
 pub use icon::{icon, icon_toned};
 pub use nav_item::nav_item;
+pub use optional_row::{OptionalRow, Was, optional_row};
 pub use page::{page, page_fixed};
 pub use section::{divider, rows, section};
 pub use setting_row::{field_row, setting_row};

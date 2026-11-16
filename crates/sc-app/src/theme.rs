@@ -2,7 +2,7 @@ use iced::border::{self, Border};
 use iced::font::Weight;
 use iced::widget::{
     button, checkbox, container, overlay::menu, pick_list, progress_bar, rule, scrollable, slider,
-    svg, text, text_input, toggler,
+    svg, text, text_editor, text_input, toggler,
 };
 use iced::{Background, Color, Font, Shadow, Theme, Vector};
 use sc_core::settings::ThemeChoice;
@@ -38,6 +38,10 @@ pub mod layout {
     pub const BOTTOMBAR_HEIGHT: f32 = 56.0;
     pub const CONTENT_MAX_WIDTH: f32 = 960.0;
     pub const CONTROL_WIDTH: f32 = 240.0;
+    /// The slot right of a control that holds a row action such as Remove.
+    pub const ROW_ACTION_WIDTH: f32 = 88.0;
+    /// A dense list row that holds a text field.
+    pub const EDIT_ROW_HEIGHT: f32 = 48.0;
     pub const NUMBER_WIDTH: f32 = 96.0;
     pub const VALUE_WIDTH: f32 = 40.0;
     pub const WIDE_CONTROL_WIDTH: f32 = 360.0;
@@ -882,6 +886,59 @@ pub fn divider(theme: &Theme) -> rule::Style {
 }
 
 pub const DIVIDER: f32 = BORDER_WIDTH;
+
+/// A switch for a setting the file does not have: it shows the game default without the accent.
+pub fn toggle_unset(theme: &Theme, status: toggler::Status) -> toggler::Style {
+    let p = tokens(theme);
+    let hovered = matches!(status, toggler::Status::Hovered { .. });
+    let track = mix(p.border, p.text_muted, if hovered { 0.25 } else { 0.0 });
+    let knob = mix(p.text_muted, p.surface_raised, 0.35);
+    toggler::Style {
+        background: track.into(),
+        background_border_color: track,
+        foreground: knob.into(),
+        foreground_border_color: knob,
+        ..toggle(theme, status)
+    }
+}
+
+/// A slider for a setting the file does not have: muted rail and handle.
+pub fn range_unset(theme: &Theme, status: slider::Status) -> slider::Style {
+    let p = tokens(theme);
+    let base = range(theme, status);
+    slider::Style {
+        rail: slider::Rail {
+            backgrounds: (p.border.into(), p.border.into()),
+            ..base.rail
+        },
+        handle: slider::Handle {
+            background: p.text_muted.into(),
+            ..base.handle
+        },
+    }
+}
+
+/// A multi-line text editor, styled like [`text_field`].
+pub fn editor(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
+    let field = text_field(
+        theme,
+        match status {
+            text_editor::Status::Active => text_input::Status::Active,
+            text_editor::Status::Hovered => text_input::Status::Hovered,
+            text_editor::Status::Focused { is_hovered } => {
+                text_input::Status::Focused { is_hovered }
+            }
+            text_editor::Status::Disabled => text_input::Status::Disabled,
+        },
+    );
+    text_editor::Style {
+        background: field.background,
+        border: field.border,
+        placeholder: field.placeholder,
+        value: field.value,
+        selection: field.selection,
+    }
+}
 
 #[cfg(test)]
 mod tests {

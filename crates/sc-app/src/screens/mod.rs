@@ -1,13 +1,16 @@
+mod attr_edit;
 pub mod backups;
 pub mod channels;
 pub mod comms;
 pub mod config;
+mod edits;
 pub mod keybinds;
 pub mod maintenance;
 pub mod overview;
 pub mod screenshots;
 pub mod settings;
 pub mod starstrings;
+mod typed;
 mod units;
 
 use crate::screen::Screen;

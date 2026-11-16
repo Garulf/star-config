@@ -141,3 +141,152 @@ pub fn snapshot<M>(ui: &mut Simulator<'_, M>, theme: &Theme, name: &str) {
     let shot = ui.snapshot(theme).expect("snapshot renders");
     assert!(shot.matches_image(&base).expect("snapshot written"));
 }
+
+/// A user.cfg as a player keeps it: a few tweaks, one comment, and lines the catalogue
+/// does not know.
+pub const DEMO_USER_CFG: &str = "\
+; my tweaks, FOV 90 feels right in the Gladius
+r_DisplayInfo = 1
+cl_fov = 90
+g_language = english
+g_headtrackingToggleEnabled = 1
+g_headtrackingGlobalSmoothingRotation = 0.4
+r_MotionBlur = 0
+r_filmgrain = 0
+pl_pit.forceSoftwareCursor = 1
+sys_MaxFPS = 144
+";
+
+const DEMO_HEAD_TRACKING: [(&str, &str); 18] = [
+    ("HeadtrackingSource", "1"),
+    ("HeadtrackingToggle", "1"),
+    ("HeadtrackingToggleAutoCalibrate", "1"),
+    ("HeadtrackingGlobalSmoothingPosition", "0.25"),
+    ("HeadtrackingGlobalSmoothingRotation", "0.4"),
+    ("HeadtrackingEnableSeatPositionOffset", "1"),
+    ("HeadtrackingThirdPersonCameraToggle", "0"),
+    ("HeadtrackingThirdPersonDisableDuringInventory", "1"),
+    ("HeadtrackingDisableDuringSeat", "0"),
+    ("HeadtrackingDisableDuringVehicleAds", "1"),
+    ("HeadtrackingDisableDuringWalking", "1"),
+    ("HeadtrackingDisableDuringADS", "1"),
+    ("HeadtrackingDisableDuringMobiGlas", "1"),
+    ("HeadtrackingDisableDuringIM", "0"),
+    ("HeadtrackingEnableRollSeat", "1"),
+    ("HeadtrackingEnableRollFPS", "0"),
+    ("HeadtrackingHoldUseRawDuringHold", "0"),
+    ("HeadtrackingInactivityTime", "2.0"),
+];
+
+const DEMO_GENERAL: [(&str, &str); 44] = [
+    ("AudioDialogueVolume", "1"),
+    ("AudioEffectsVolume", "0.9"),
+    ("AudioMasterVolume", "0.8"),
+    ("AudioMusicVolume", "0.35"),
+    ("AutoZoomOnSelectedTarget", "1"),
+    ("AutoZoomOnSelectedTargetStrength", "0.5"),
+    ("Brightness", "0.5"),
+    ("CameraSpringMovement", "0.5"),
+    ("ChromaticAberration", "0"),
+    ("Contrast", "0.5"),
+    ("FOV", "90"),
+    ("FacewareCameraIndex", "0"),
+    ("FilmGrain", "0"),
+    ("FoipEnabled", "1"),
+    ("GForceHeadBobScale", "0.3"),
+    ("Gamma", "1"),
+    ("GraphicsRenderer", "1"),
+    ("HmdCursorSensitivity", "2"),
+    ("HudColor", "0"),
+    ("HudOpacity", "1"),
+    ("LensFlare", "0"),
+    ("LookAheadEnabled", "0"),
+    ("MicSensitivity", "0.6"),
+    ("MotionBlur", "0"),
+    ("ObjectDetail", "3"),
+    ("ParticleQuality", "2"),
+    ("PlanetDetail", "3"),
+    ("PostProcessQuality", "2"),
+    ("Resolution", "2560x1440"),
+    ("ShaderQuality", "3"),
+    ("ShadowQuality", "2"),
+    ("ShakeScale", "0.3"),
+    ("Sharpening", "0.5"),
+    ("SysSpec", "3"),
+    ("TextureQuality", "2"),
+    ("Upscaling", "1"),
+    ("UpscalingQuality", "2"),
+    ("VSync", "0"),
+    ("VoipInputVolume", "0.85"),
+    ("VoipOutputVolume", "0.7"),
+    ("VoipPushToTalk", "1"),
+    ("VolumetricCloudQuality", "2"),
+    ("WaterQuality", "2"),
+    ("WindowMode", "2"),
+];
+
+/// An attributes.xml with a few hundred settings, every head tracking name from the
+/// catalogue among them, in the layout the game writes.
+pub fn demo_attributes() -> String {
+    let devices = ["Gamepad", "Joystick", "Mouse"];
+    let axes = [
+        "AimPitch",
+        "AimYaw",
+        "LookPitch",
+        "LookYaw",
+        "Pitch",
+        "Roll",
+        "StrafeForward",
+        "StrafeLateral",
+        "StrafeVertical",
+        "Throttle",
+        "Yaw",
+    ];
+    let tuning = [
+        ("Deadzone", "0.05"),
+        ("Exponent", "1"),
+        ("Invert", "0"),
+        ("Saturation", "1"),
+        ("Sensitivity", "1"),
+    ];
+    let mut entries: Vec<(String, String)> = DEMO_GENERAL
+        .iter()
+        .chain(&DEMO_HEAD_TRACKING)
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect();
+    for device in devices {
+        for axis in axes {
+            for (setting, value) in tuning {
+                entries.push((format!("{device}{axis}{setting}"), value.to_string()));
+            }
+        }
+    }
+    entries.sort();
+    attributes_xml(&entries)
+}
+
+/// The text of an attributes.xml holding `entries` in order.
+pub fn attributes_xml(entries: &[(String, String)]) -> String {
+    let mut xml = String::from("<Attributes Version=\"1\">\n");
+    for (name, value) in entries {
+        xml.push_str(&format!(" <Attr name=\"{name}\" value=\"{value}\"/>\n"));
+    }
+    xml.push_str("</Attributes>\n");
+    xml
+}
+
+/// Writes `user_cfg` and `attributes` into the channel's usual places when given.
+pub fn write_channel_files(
+    channel: &sc_core::install::Channel,
+    user_cfg: Option<&[u8]>,
+    attributes: Option<&[u8]>,
+) {
+    if let Some(bytes) = user_cfg {
+        fs::write(channel.user_cfg(), bytes).unwrap();
+    }
+    if let Some(bytes) = attributes {
+        let path = channel.attributes_xml();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+}
