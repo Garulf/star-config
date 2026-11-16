@@ -21,7 +21,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo test --workspace --no-fail-fast
       - run: cargo build --release -p sc-app
       - uses: actions/upload-artifact@v7
         with:
