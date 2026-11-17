@@ -1,6 +1,7 @@
 //! Known console variables for user.cfg.
 
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 const DATA: &str = include_str!("../../data/cvars.toml");
@@ -40,18 +41,24 @@ struct Row {
     description: String,
     attribute: Option<String>,
     source: String,
+    choices: Option<Vec<(String, String)>>,
 }
 
 impl Row {
     fn into_cvar(self) -> Cvar {
-        let kind = match self.kind.as_str() {
-            "bool" => CvarKind::Bool,
-            "float" => CvarKind::Float {
+        let kind = match (self.kind.as_str(), self.choices) {
+            ("bool", None) => CvarKind::Bool,
+            ("float", None) => CvarKind::Float {
                 min: f64::MIN,
                 max: f64::MAX,
             },
-            "text" => CvarKind::Text,
-            other => panic!("cvars.toml: {}: unknown kind {other:?}", self.name),
+            ("text", None) => CvarKind::Text,
+            ("choice", Some(choices)) if distinct_values(&choices) => CvarKind::Choice(choices),
+            ("bool" | "float" | "text" | "choice", _) => panic!(
+                "cvars.toml: {}: only a choice has choices, and they need distinct values",
+                self.name
+            ),
+            (other, _) => panic!("cvars.toml: {}: unknown kind {other:?}", self.name),
         };
         Cvar {
             name: self.name,
@@ -63,6 +70,11 @@ impl Row {
             source: self.source,
         }
     }
+}
+
+fn distinct_values(choices: &[(String, String)]) -> bool {
+    let values: HashSet<&String> = choices.iter().map(|(value, _)| value).collect();
+    !choices.is_empty() && values.len() == choices.len()
 }
 
 pub fn all() -> &'static [Cvar] {
@@ -119,7 +131,6 @@ pub fn validate(cvar: &Cvar, value: &str) -> std::result::Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
     fn cvar(kind: CvarKind) -> Cvar {
         Cvar {
@@ -173,6 +184,17 @@ mod tests {
             source.description,
             "Source device number. Which number means which device is not confirmed."
         );
+    }
+
+    #[test]
+    fn enumerated_cvars_are_choices() {
+        let values = |name: &str| match &find(name).unwrap().kind {
+            CvarKind::Choice(options) => options.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>(),
+            other => panic!("{name} is {other:?}"),
+        };
+        assert_eq!(values("r_MotionBlur"), ["0", "1", "2"]);
+        assert_eq!(values("r_ssdo"), ["0", "1", "2"]);
+        assert_eq!(values("r_DisplayInfo"), ["0", "1", "2", "3"]);
     }
 
     #[test]

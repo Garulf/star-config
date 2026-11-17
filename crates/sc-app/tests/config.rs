@@ -284,8 +284,10 @@ fn search_filters_rows() {
     );
     assert!(
         has(&fx.app, "Performance overlay"),
-        "matches the description"
+        "matches a choice label"
     );
+    send(&mut fx, [config::Message::Search("directional".into())]);
+    assert!(has(&fx.app, "Ambient occlusion"), "matches the description");
     send(&mut fx, [config::Message::Search("zzzz".into())]);
     assert!(has(&fx.app, "Nothing matches"));
 }

@@ -246,6 +246,15 @@ fn cvar_matches(cvar: &'static Cvar, query: &str) -> bool {
         || labels::label(cvar).to_lowercase().contains(query)
         || cvar.name.to_lowercase().contains(query)
         || cvar.description.to_lowercase().contains(query)
+        || choice_labels(cvar).any(|label| label.to_lowercase().contains(query))
+}
+
+fn choice_labels(cvar: &Cvar) -> impl Iterator<Item = &str> {
+    let choices = match &cvar.kind {
+        CvarKind::Choice(choices) => choices.as_slice(),
+        _ => &[],
+    };
+    choices.iter().map(|(_, label)| label.as_str())
 }
 
 fn was(base: Option<&str>, current: Option<&str>) -> Option<Was> {

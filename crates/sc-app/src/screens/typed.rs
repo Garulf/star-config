@@ -152,13 +152,7 @@ where
     M: Clone + 'a,
     F: Fn(String) -> M + Clone + 'a,
 {
-    let items: Vec<Choice> = options
-        .iter()
-        .map(|(value, label)| Choice {
-            value: value.clone(),
-            label: label.clone(),
-        })
-        .collect();
+    let items = choice_items(options, value);
     let label_of = |wanted: Option<&str>| {
         wanted.and_then(|wanted| items.iter().find(|item| item.value == wanted).cloned())
     };
@@ -176,6 +170,25 @@ where
         .into()
 }
 
+/// The listed choices, plus the file's value when it is not one of them, so the control never
+/// hides what the file holds.
+fn choice_items(options: &[(String, String)], value: Option<&str>) -> Vec<Choice> {
+    let mut items: Vec<Choice> = options
+        .iter()
+        .map(|(value, label)| Choice {
+            value: value.clone(),
+            label: label.clone(),
+        })
+        .collect();
+    if let Some(value) = value.filter(|value| !items.iter().any(|item| item.value == *value)) {
+        items.push(Choice {
+            value: value.to_string(),
+            label: value.to_string(),
+        });
+    }
+    items
+}
+
 /// A slider position written with as many decimals as its step has.
 pub fn format_step(value: f64, step: f64) -> String {
     let decimals = step
@@ -188,6 +201,20 @@ pub fn format_step(value: f64, step: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_value_outside_the_choices_is_listed_as_itself() {
+        let options = [("0".to_string(), "Off".to_string())];
+        let listed = |value| {
+            choice_items(&options, value)
+                .into_iter()
+                .map(|item| format!("{}={}", item.value, item.label))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(listed(None), ["0=Off"]);
+        assert_eq!(listed(Some("0")), ["0=Off"]);
+        assert_eq!(listed(Some("4")), ["0=Off", "4=4"]);
+    }
 
     #[test]
     fn format_step_uses_the_step_precision() {

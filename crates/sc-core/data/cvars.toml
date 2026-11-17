@@ -15,9 +15,9 @@ source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
 
 [[cvar]]
 name = "r_MotionBlur"
-kind = "text"
+kind = "choice"
+choices = [["0", "Off"], ["1", "Vehicles only"], ["2", "All movement"]]
 category = "Graphics"
-description = "0 disabled, 1 vehicle blur, 2 all movement blur"
 source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
 
 [[cvar]]
@@ -36,9 +36,10 @@ source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
 
 [[cvar]]
 name = "r_ssdo"
-kind = "text"
+kind = "choice"
+choices = [["0", "Off"], ["1", "On"], ["2", "On, with extra ambient occlusion"]]
 category = "Graphics"
-description = "Screen space directional occlusion; 0= Disabled; 1= Enabled; 2= Optimized additional ambient occlusion"
+description = "Screen space directional occlusion."
 source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
 
 [[cvar]]
@@ -74,9 +75,10 @@ source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
 
 [[cvar]]
 name = "r_DisplayInfo"
-kind = "text"
+kind = "choice"
+choices = [["0", "Off"], ["1", "Basic details"], ["2", "With server population"], ["3", "With GPU details"]]
 category = "Diagnostics"
-description = "show server details (0 disabled, 1 basic details, 2 includes server population, 3 includes GPU details.)"
+description = "Show server details on screen."
 source = "https://gist.github.com/troubleNZ/6cd32da6eabaaf9d20492d6eeda221af"
 
 [[cvar]]
