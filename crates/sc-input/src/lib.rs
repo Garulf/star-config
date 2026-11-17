@@ -52,7 +52,7 @@ pub trait Backend {
     fn read(&mut self) -> Vec<(DeviceKey, Result<Vec<Raw>, ()>)>;
 }
 
-impl Backend for Box<dyn Backend + Send> {
+impl Backend for Box<dyn Backend> {
     fn devices(&self) -> &[DeviceInfo] {
         (**self).devices()
     }
@@ -85,12 +85,12 @@ impl Backend for NoDevices {
 }
 
 #[cfg(target_os = "linux")]
-pub fn open(class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
+pub fn open(class: DeviceClass) -> Session<Box<dyn Backend>> {
     Session::new(Box::new(linux::open(class)))
 }
 
 #[cfg(windows)]
-pub fn open(class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
+pub fn open(class: DeviceClass) -> Session<Box<dyn Backend>> {
     match class {
         DeviceClass::Gamepad => Session::new(Box::new(windows::XInputBackend::open())),
         DeviceClass::Stick => Session::new(Box::new(windows::DInputBackend::open())),
@@ -98,6 +98,6 @@ pub fn open(class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-pub fn open(_class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
+pub fn open(_class: DeviceClass) -> Session<Box<dyn Backend>> {
     Session::new(Box::new(NoDevices))
 }
