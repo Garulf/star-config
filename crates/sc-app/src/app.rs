@@ -22,6 +22,7 @@ use sc_core::install::{Channel, Install};
 use sc_core::launcher::{self, LaunchMethod};
 use sc_core::process::RunState;
 use sc_core::starstrings::Http;
+use sc_input::DeviceClass;
 use std::collections::VecDeque;
 use std::fmt;
 use std::path::{Component, PathBuf};
@@ -751,7 +752,7 @@ impl App {
     }
 
     fn input(&mut self, event: Event) -> Task<Message> {
-        if !self.wants_input() {
+        if !self.wants_input() && self.listens_to().is_none() {
             return Task::none();
         }
         match self.screen {
@@ -888,16 +889,31 @@ impl App {
     pub fn wants_input(&self) -> bool {
         self.dialog.is_none()
             && match self.screen {
-                Screen::Keybinds => self.screens.keybinds.wants_input(),
+                Screen::Keybinds => self.screens.keybinds.wants_keys(),
                 Screen::Screenshots => self.screens.screenshots.wants_input(),
                 _ => false,
             }
+    }
+
+    /// The sticks or gamepads the Keybinds screen is reading, while nothing covers it.
+    pub fn listens_to(&self) -> Option<DeviceClass> {
+        self.device_session().map(|session| session.class)
+    }
+
+    /// The device reading the Keybinds screen wants, while nothing covers it.
+    pub fn device_session(&self) -> Option<keybinds::DeviceSession> {
+        let shown = self.dialog.is_none() && self.screen == Screen::Keybinds;
+        shown
+            .then(|| self.screens.keybinds.device_session())
+            .flatten()
     }
 
     /// Where the event subscription sends keyboard and mouse events right now.
     pub fn event_handler(&self) -> fn(Event, event::Status, window::Id) -> Option<Message> {
         if self.wants_input() {
             captured_input
+        } else if self.listens_to().is_some() {
+            escape_or_shortcut
         } else {
             shortcut_event
         }
@@ -908,6 +924,11 @@ impl App {
             time::every(PROBE_EVERY).map(|_| Message::ProbeTick),
             event::listen_with(self.event_handler()),
         ];
+        if let Some(session) = self.device_session() {
+            subscriptions.push(
+                Subscription::run_with(session, keybinds::device_stream).map(Message::Keybinds),
+            );
+        }
         if self.toasts.iter().any(Toast::expires) {
             subscriptions.push(time::every(TOAST_SWEEP).map(|_| Message::SweepToasts));
         }
@@ -1306,6 +1327,14 @@ fn shortcut_event(event: Event, status: event::Status, _window: window::Id) -> O
         }
         _ => None,
     }
+}
+
+/// While a stick or gamepad cell listens, Escape stops it and every other key works as usual.
+fn escape_or_shortcut(event: Event, status: event::Status, window: window::Id) -> Option<Message> {
+    if keybinds::stops_listening(&event) && status == event::Status::Ignored {
+        return Some(Message::Input(event));
+    }
+    shortcut_event(event, status, window)
 }
 
 fn captured_input(event: Event, status: event::Status, _window: window::Id) -> Option<Message> {

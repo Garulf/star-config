@@ -62,6 +62,32 @@ pub struct Device {
     pub product: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UsbId {
+    pub vendor: u16,
+    pub product: u16,
+}
+
+const PIDVID_SUFFIX: &str = "504944564944";
+
+pub fn usb_id(product: &str) -> Option<UsbId> {
+    let open = product.rfind('{')?;
+    let guid = product[open + 1..].split('}').next()?;
+    let groups: Vec<&str> = guid.split('-').collect();
+    if groups.len() != 5 || !groups[4].eq_ignore_ascii_case(PIDVID_SUFFIX) {
+        return None;
+    }
+    let head = groups[0];
+    if head.len() != 8 || !head.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let value = u32::from_str_radix(head, 16).ok()?;
+    Some(UsbId {
+        vendor: (value & 0xFFFF) as u16,
+        product: (value >> 16) as u16,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
     pub map: String,
@@ -857,6 +883,44 @@ fn check_name(name: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usb_ids_come_from_the_product_guid() {
+        assert_eq!(
+            usb_id(" VKBsim Gladiator EVO L    {0201231D-0000-0000-0000-504944564944}"),
+            Some(UsbId {
+                vendor: 0x231D,
+                product: 0x0201
+            })
+        );
+        assert_eq!(
+            usb_id("VKB Gladiator NXT L  {0200231D-0000-0000-0000-504944564944}"),
+            Some(UsbId {
+                vendor: 0x231D,
+                product: 0x0200
+            })
+        );
+        assert_eq!(
+            usb_id("Thrustmaster T-Pedals  {B678044F-0000-0000-0000-504944564944}"),
+            Some(UsbId {
+                vendor: 0x044F,
+                product: 0xB678
+            })
+        );
+        assert_eq!(
+            usb_id("X52 H.O.T.A.S.  {075C06A3-0000-0000-0000-504944564944}"),
+            Some(UsbId {
+                vendor: 0x06A3,
+                product: 0x075C
+            })
+        );
+        assert_eq!(
+            usb_id("Keyboard  {6F1D2B61-D5A0-11CF-BFC7-444553540000}"),
+            None
+        );
+        assert_eq!(usb_id("Controller (Gamepad)"), None);
+        assert_eq!(usb_id("odd {0201231D}"), None);
+    }
     use crate::error::Error;
     use crate::staging::Document;
     use std::fs;

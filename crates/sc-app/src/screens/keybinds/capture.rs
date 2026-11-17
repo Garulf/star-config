@@ -208,6 +208,15 @@ pub fn label_of(name: &str) -> Option<&'static str> {
         })
 }
 
+/// An Escape press, which stops any listening cell.
+pub fn stops_listening(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Keyboard(keyboard::Event::KeyPressed { physical_key, .. })
+            if code(physical_key) == Some(Code::Escape)
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Waiting,
@@ -226,6 +235,11 @@ pub struct Capture {
 }
 
 impl Capture {
+    /// The modifiers held down so far, in the game's names, in the order pressed.
+    pub fn held(&self) -> &[&'static str] {
+        &self.held
+    }
+
     pub fn event(&mut self, event: &Event, mouse_allowed: bool) -> Outcome {
         match event {
             Event::Keyboard(keyboard::Event::KeyPressed {
@@ -407,6 +421,17 @@ mod tests {
             capture.event(&click, true),
             Outcome::Done("lctrl+mouse4".into())
         );
+    }
+
+    #[test]
+    fn held_modifiers_show_until_the_combination_ends() {
+        let mut capture = Capture::default();
+        assert!(capture.held().is_empty());
+        capture.event(&press(Code::AltLeft), false);
+        capture.event(&press(Code::ShiftLeft), false);
+        assert_eq!(capture.held(), ["lalt", "lshift"]);
+        capture.event(&press(Code::KeyF), false);
+        assert!(capture.held().is_empty());
     }
 
     #[test]

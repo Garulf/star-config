@@ -3,7 +3,7 @@
 
 use super::NOT_IN_BUILD;
 use super::inputs::{input_caps, product_name, slot_label};
-use sc_core::actionmaps::{ActionMaps, DeviceKind, Slot, parse_input};
+use sc_core::actionmaps::{ActionMaps, DeviceKind, Slot, UsbId, parse_input, usb_id};
 use sc_core::binds::{self, KINDS, Origin};
 use sc_core::defaults::{ActionDef, GameData, humanise};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -121,6 +121,7 @@ pub struct Model {
     pub conflicts: usize,
     pub products: HashMap<Slot, String>,
     stick_binds: BTreeMap<u32, usize>,
+    stick_ids: Vec<(u32, UsbId)>,
 }
 
 type Key = (String, String);
@@ -191,6 +192,7 @@ impl Model {
             conflicts: conflicts.len(),
             products: products(current),
             stick_binds: stick_binds(current),
+            stick_ids: stick_ids(current),
             rows,
         }
     }
@@ -219,6 +221,11 @@ impl Model {
             .iter()
             .map(|entry| entry.count(show_unlisted))
             .sum()
+    }
+
+    /// Each stick the file names with a USB ID it can be matched by, lowest first.
+    pub fn stick_ids(&self) -> Vec<(u32, UsbId)> {
+        self.stick_ids.clone()
     }
 
     /// Sticks the file names or binds, in order.
@@ -427,6 +434,17 @@ fn products(current: &ActionMaps) -> HashMap<Slot, String> {
             (!product.is_empty()).then_some((device.slot, product))
         })
         .collect()
+}
+
+fn stick_ids(current: &ActionMaps) -> Vec<(u32, UsbId)> {
+    let mut ids: Vec<(u32, UsbId)> = current
+        .devices()
+        .iter()
+        .filter(|device| device.slot.kind == DeviceKind::Joystick)
+        .filter_map(|device| Some((device.slot.instance, usb_id(device.product.as_deref()?)?)))
+        .collect();
+    ids.sort_by_key(|(instance, _)| *instance);
+    ids
 }
 
 fn stick_binds(current: &ActionMaps) -> BTreeMap<u32, usize> {

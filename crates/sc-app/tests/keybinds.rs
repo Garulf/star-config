@@ -10,10 +10,11 @@ use sc_app::app::{App, Message, Shortcut};
 use sc_app::context::Context;
 use sc_app::screen::{Screen, ToastKind};
 use sc_app::screens::keybinds::{
-    self, ADVANCED_TAB, AdvancedMessage, BINDS_TAB, CAPTURE_PROMPT, CellRef, DevicePick,
-    EMPTY_BODY, EMPTY_TITLE, GAME_DATA_LOADING, GAME_DEFAULT, NO_GAME_DATA_NOTE, NOT_A_NUMBER,
-    NOT_CONNECTED, NOT_IN_BUILD, OptionField, POINT_RANGE, PointPart, RESET_CAPTION, SHOW_UNLISTED,
-    SlotChoice, Source, SourceChoice, TRY_AGAIN, UNBIND_CAPTION, UNKNOWN_KEY, UNRECOGNISED,
+    self, ADVANCED_TAB, AdvancedMessage, BINDS_TAB, CellRef, DevicePick, EMPTY_BODY, EMPTY_TITLE,
+    GAME_DATA_LOADING, GAME_DEFAULT, KEY_PROMPT, MOUSE_PROMPT, NO_GAME_DATA_NOTE, NOT_A_NUMBER,
+    NOT_CONNECTED, NOT_IN_BUILD, OptionField, PAD_PROMPT, PICK_WITHOUT_DEVICE, POINT_RANGE,
+    PointPart, RESET_CAPTION, SHOW_UNLISTED, STICK_PROMPT, SlotChoice, Source, SourceChoice,
+    TRY_AGAIN, UNBIND_CAPTION, UNKNOWN_KEY, UNRECOGNISED,
 };
 use sc_app::theme;
 use sc_core::actionmaps::{ActionMaps, AxisField, DeviceKind, GroupField, Op, Slot};
@@ -21,6 +22,7 @@ use sc_core::defaults::Unavailable;
 use sc_core::process::{FixedProbe, RunState};
 use sc_core::settings::ThemeChoice;
 use sc_core::staging::Document;
+use sc_input::{DeviceClass, DeviceInfo, Heard};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -265,8 +267,18 @@ fn selecting_a_keyboard_cell_starts_capture() {
         DeviceKind::Keyboard,
     );
     assert!(app.wants_input());
-    assert!(has(&app, CAPTURE_PROMPT));
+    assert!(has(&app, KEY_PROMPT));
     assert!(has(&app, "v_strafe_forward in Spaceship movement"));
+
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_forward",
+        DeviceKind::Mouse,
+    );
+    assert!(app.wants_input());
+    assert!(has(&app, MOUSE_PROMPT));
+    assert!(!has(&app, KEY_PROMPT));
 }
 
 #[test]
@@ -340,7 +352,7 @@ fn escape_cancels_capture_without_staging() {
     assert_eq!(pending(&app), 0);
     assert!(!app.wants_input());
     assert!(has(&app, "Listen again"));
-    assert!(!has(&app, CAPTURE_PROMPT));
+    assert!(!has(&app, KEY_PROMPT));
 }
 
 #[test]
@@ -366,7 +378,7 @@ fn typed_input_is_validated_inline() {
 }
 
 #[test]
-fn joystick_cell_offers_quick_picks_and_no_capture() {
+fn joystick_picks_sit_behind_a_toggle() {
     let temp = tempfile::tempdir().unwrap();
     let (mut app, _) = demo(temp.path());
     select(
@@ -376,7 +388,11 @@ fn joystick_cell_offers_quick_picks_and_no_capture() {
         DeviceKind::Joystick,
     );
     assert!(!app.wants_input());
-    assert!(!has(&app, CAPTURE_PROMPT));
+    assert_eq!(app.listens_to(), Some(DeviceClass::Stick));
+    assert!(!has(&app, KEY_PROMPT));
+    assert!(has(&app, STICK_PROMPT));
+    assert!(!has(&app, "Buttons"));
+    clicked(&mut app, PICK_WITHOUT_DEVICE);
     for pick in [
         "Buttons",
         "1",
@@ -1814,4 +1830,677 @@ fn advanced_controls_pictures() {
     ] {
         testkit::snapshot(&mut sim(&app), &theme::theme(choice), name);
     }
+}
+
+fn vkb_r() -> DeviceInfo {
+    DeviceInfo {
+        vendor: 0x231D,
+        product: 0x0201,
+        name: "VKB Gladiator NXT R".into(),
+    }
+}
+
+/// The listen the screen is on now, as the device reader for it would say.
+fn generation(app: &App) -> u64 {
+    app.device_session().map_or(0, |session| session.generation)
+}
+
+fn heard(app: &mut App, device: DeviceInfo, input: &str) {
+    let generation = generation(app);
+    send(
+        app,
+        keybinds::Message::Heard {
+            generation,
+            heard: Heard {
+                device,
+                input: input.into(),
+            },
+        },
+    );
+}
+
+fn pick_stick(app: &mut App, instance: u32) {
+    send(
+        app,
+        keybinds::Message::PickStick(SlotChoice {
+            slot: Slot {
+                kind: DeviceKind::Joystick,
+                instance,
+            },
+            label: format!("Joystick {instance}"),
+        }),
+    );
+}
+
+fn escape() -> Event {
+    key(
+        Code::Escape,
+        Key::Named(Named::Escape),
+        Location::Standard,
+        Modifiers::empty(),
+    )
+}
+
+fn applied_bind(app: &mut App, path: &Path, action: &str, input: &str) {
+    feed(app, [Message::Apply]);
+    assert_eq!(
+        read(path),
+        after(
+            DEMO,
+            Op::Bind {
+                map: "spaceship_movement".into(),
+                action: action.into(),
+                input: input.into(),
+            },
+        )
+    );
+}
+
+#[test]
+fn stick_cell_listens_for_devices() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    assert_eq!(app.listens_to(), None);
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    assert_eq!(app.listens_to(), Some(DeviceClass::Stick));
+    assert!(!app.wants_input());
+    assert!(has(&app, STICK_PROMPT));
+}
+
+#[test]
+fn a_press_lands_on_the_stick_the_file_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, vec![vkb_r()], 0);
+    assert_eq!(pending(&app), 0);
+    heard(&mut app, vkb_r(), "button7");
+    assert_eq!(pending(&app), 1);
+    assert_eq!(app.listens_to(), None);
+    assert!(has(&app, "Button 7"));
+    assert!(has_containing(
+        &app,
+        "Heard Button 7 on VKB Gladiator NXT R, bound to js2"
+    ));
+    assert!(has(&app, "Listen again"));
+
+    send(&mut app, keybinds::Message::Typed("button9".into()));
+    clicked(&mut app, "Set");
+    applied_bind(&mut app, &path, "v_pitch", "js2_button9");
+}
+
+#[test]
+fn an_unknown_stick_uses_the_picked_one_and_says_so() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    pick_stick(&mut app, 1);
+    let unknown = DeviceInfo {
+        vendor: 0x044F,
+        product: 0xB10A,
+        name: "T.16000M".into(),
+    };
+    heard(&mut app, unknown, "button3");
+    assert_eq!(pending(&app), 1);
+    assert!(
+        texts(&app)
+            .iter()
+            .any(|text| text.contains("not in this file yet") && text.contains("js1")),
+        "{:?}",
+        texts(&app)
+    );
+    applied_bind(&mut app, &path, "v_pitch", "js1_button3");
+}
+
+#[test]
+fn identical_sticks_use_the_picked_one() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_with_channels(temp.path(), &["LIVE"]);
+    let path = actionmaps(&ctx);
+    let twins = replaced_once(DEMO, "{0201231D-", "{0200231D-");
+    write(&path, &twins);
+    let mut app = open(ctx);
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    pick_stick(&mut app, 2);
+    let left = DeviceInfo {
+        vendor: 0x231D,
+        product: 0x0200,
+        name: "VKB Gladiator NXT L".into(),
+    };
+    heard(&mut app, left, "button2");
+    assert_eq!(pending(&app), 1);
+    assert!(has_containing(&app, "cannot be told apart"));
+    assert!(has_containing(&app, "bound to js2"));
+    feed(&mut app, [Message::Apply]);
+    assert_eq!(
+        read(&path),
+        after(
+            &twins,
+            Op::Bind {
+                map: "spaceship_movement".into(),
+                action: "v_pitch".into(),
+                input: "js2_button2".into(),
+            },
+        )
+    );
+}
+
+#[test]
+fn an_input_the_game_rejects_keeps_listening() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    heard(&mut app, vkb_r(), "button129");
+    assert_eq!(pending(&app), 0);
+    assert_eq!(app.listens_to(), Some(DeviceClass::Stick));
+    assert!(has(&app, STICK_PROMPT));
+    assert!(has_containing(&app, "button129"));
+}
+
+#[test]
+fn gamepad_press_stages_gp1() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Gamepad,
+    );
+    assert_eq!(app.listens_to(), Some(DeviceClass::Gamepad));
+    assert!(has(&app, PAD_PROMPT));
+    let pad = DeviceInfo {
+        vendor: 0x045E,
+        product: 0x028E,
+        name: "Xbox 360 Controller".into(),
+    };
+    heard(&mut app, pad, "shoulderl");
+    assert_eq!(pending(&app), 1);
+    assert_eq!(app.listens_to(), None);
+    assert!(has_containing(
+        &app,
+        "Heard L shoulder on Xbox 360 Controller"
+    ));
+    applied_bind(&mut app, &path, "v_strafe_up", "gp1_shoulderl");
+}
+
+#[test]
+fn stick_listening_ignores_keys_but_escape() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    let f = || {
+        key(
+            Code::KeyF,
+            Key::Character("f".into()),
+            Location::Standard,
+            Modifiers::empty(),
+        )
+    };
+    input(&mut app, f());
+    input(
+        &mut app,
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+    );
+    assert_eq!(pending(&app), 0);
+    assert_eq!(app.listens_to(), Some(DeviceClass::Stick));
+    assert!(!has_containing(&app, UNKNOWN_KEY));
+
+    let route = |app: &App, event: Event| {
+        app.event_handler()(event, event::Status::Ignored, window::Id::unique())
+    };
+    assert!(matches!(route(&app, escape()), Some(Message::Input(_))));
+    assert!(matches!(
+        route(&app, Event::Keyboard(testkit::ctrl("s"))),
+        Some(Message::Shortcut(Shortcut::Apply))
+    ));
+    assert!(route(&app, f()).is_none());
+
+    input(&mut app, escape());
+    assert_eq!(app.listens_to(), None);
+    assert!(has(&app, "Listen again"));
+    clicked(&mut app, "Listen again");
+    assert_eq!(app.listens_to(), Some(DeviceClass::Stick));
+}
+
+#[test]
+fn closing_the_panel_stops_device_listening() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    send(&mut app, keybinds::Message::ClosePanel);
+    assert_eq!(app.listens_to(), None);
+
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    feed(&mut app, [Message::Navigate(Screen::Overview)]);
+    assert_eq!(app.listens_to(), None);
+    feed(&mut app, [Message::Navigate(Screen::Keybinds)]);
+    assert_eq!(app.listens_to(), Some(DeviceClass::Stick));
+
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_forward",
+        DeviceKind::Keyboard,
+    );
+    assert_eq!(app.listens_to(), None);
+    assert!(app.wants_input());
+}
+
+fn vkb_l() -> DeviceInfo {
+    DeviceInfo {
+        vendor: 0x231D,
+        product: 0x0200,
+        name: "VKB Gladiator NXT L".into(),
+    }
+}
+
+fn devices(app: &mut App, found: Vec<DeviceInfo>, unreadable: usize) {
+    let generation = generation(app);
+    send(
+        app,
+        keybinds::Message::Devices {
+            generation,
+            found,
+            unreadable,
+        },
+    );
+}
+
+fn hold_left_alt(app: &mut App) {
+    input(
+        app,
+        key(
+            Code::AltLeft,
+            Key::Named(Named::Alt),
+            Location::Left,
+            Modifiers::ALT,
+        ),
+    );
+}
+
+#[test]
+fn keyboard_box_shows_held_modifiers() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_forward",
+        DeviceKind::Keyboard,
+    );
+    assert!(!has(&app, "L Alt"));
+    assert!(has_containing(
+        &app,
+        "Hold Alt, Ctrl or Shift for a combination. Esc stops listening."
+    ));
+    hold_left_alt(&mut app);
+    assert!(has(&app, "L Alt"));
+    assert!(has(&app, "then a key. Esc stops listening."));
+    assert!(has(&app, KEY_PROMPT));
+    assert!(app.wants_input());
+    assert_eq!(pending(&app), 0);
+}
+
+#[test]
+fn stick_box_names_the_devices_it_hears() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, vec![vkb_l(), vkb_r()], 0);
+    assert!(has_containing(
+        &app,
+        "Listening to: VKB Gladiator NXT L, VKB Gladiator NXT R"
+    ));
+    assert!(has_containing(
+        &app,
+        "Or move an axis or push a hat. Esc stops listening."
+    ));
+}
+
+#[test]
+fn no_sticks_opens_the_picks() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, vec![vkb_r()], 0);
+    assert!(!has(&app, "32"));
+    clicked(&mut app, PICK_WITHOUT_DEVICE);
+    assert!(has(&app, "32"));
+
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, Vec::new(), 0);
+    assert!(has_containing(
+        &app,
+        "No sticks found. Plug one in and choose Listen again, or pick below."
+    ));
+    assert!(has(&app, "32"));
+    assert!(has(&app, "Listen again"));
+}
+
+#[test]
+fn no_gamepads_say_so() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Gamepad,
+    );
+    assert!(has_containing(
+        &app,
+        "Or move a stick or pull a trigger. Esc stops listening."
+    ));
+    devices(&mut app, Vec::new(), 0);
+    assert!(has_containing(
+        &app,
+        "No gamepads found. Plug one in and choose Listen again, or pick below."
+    ));
+}
+
+#[test]
+fn unreadable_sticks_are_named_as_such() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, Vec::new(), 2);
+    assert!(has_containing(
+        &app,
+        "Found 2 sticks that this app cannot read."
+    ));
+    #[cfg(target_os = "linux")]
+    assert!(has_containing(
+        &app,
+        "Found 2 sticks that this app cannot read. Check that your user can read /dev/input."
+    ));
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert!(has_containing(
+            &app,
+            "Found 2 sticks that this app cannot read. Another program may be holding it."
+        ));
+        assert!(!has_containing(&app, "/dev/input"));
+    }
+    assert!(!has_containing(&app, "No sticks found"));
+}
+
+#[test]
+fn one_unreadable_stick_is_singular() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, Vec::new(), 1);
+    assert!(has_containing(
+        &app,
+        "Found 1 stick that this app cannot read."
+    ));
+}
+
+#[test]
+fn unreadable_gamepads_are_named_as_gamepads() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Gamepad,
+    );
+    devices(&mut app, Vec::new(), 2);
+    assert!(has_containing(
+        &app,
+        "Found 2 gamepads that this app cannot read."
+    ));
+}
+
+#[test]
+fn unreadable_devices_are_counted_beside_the_listened_ones() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, vec![vkb_l()], 1);
+    assert!(has_containing(&app, "Listening to: VKB Gladiator NXT L"));
+    assert!(has_containing(
+        &app,
+        "Found 1 stick that this app cannot read."
+    ));
+}
+
+#[test]
+fn a_message_from_an_earlier_listen_is_ignored() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    let earlier = generation(&app);
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Joystick,
+    );
+    send(
+        &mut app,
+        keybinds::Message::Devices {
+            generation: earlier,
+            found: Vec::new(),
+            unreadable: 0,
+        },
+    );
+    assert!(!has_containing(&app, "No sticks found"));
+    send(
+        &mut app,
+        keybinds::Message::Heard {
+            generation: earlier,
+            heard: Heard {
+                device: vkb_r(),
+                input: "button7".into(),
+            },
+        },
+    );
+    assert_eq!(pending(&app), 0);
+    assert_eq!(app.listens_to(), Some(DeviceClass::Stick));
+
+    heard(&mut app, vkb_r(), "button7");
+    assert_eq!(pending(&app), 1);
+}
+
+#[test]
+fn a_new_cell_does_not_keep_the_old_device_list() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, Vec::new(), 0);
+    assert!(has(&app, "32"));
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Joystick,
+    );
+    assert!(!has_containing(&app, "No sticks found"));
+    devices(&mut app, vec![vkb_l()], 0);
+    assert!(!has(&app, "32"));
+    assert!(has_containing(&app, "Listening to: VKB Gladiator NXT L"));
+}
+
+#[test]
+fn gamepad_picks_stage_a_bind() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Gamepad,
+    );
+    devices(&mut app, Vec::new(), 0);
+    assert_eq!(count(&app, "L trigger"), 1);
+    assert!(has(&app, "L stick X"));
+    clicked(&mut app, "L shoulder");
+    clicked(&mut app, "Set");
+    assert_eq!(pending(&app), 1);
+    applied_bind(&mut app, &path, "v_strafe_up", "gp1_shoulderl");
+}
+
+#[test]
+fn every_listen_opens_a_fresh_device_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    assert_eq!(app.device_session(), None);
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    let first = app.device_session().expect("listening");
+    assert_eq!(first.class, DeviceClass::Stick);
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Joystick,
+    );
+    let second = app.device_session().expect("listening");
+    assert_eq!(second.class, DeviceClass::Stick);
+    assert_ne!(first, second);
+
+    send(&mut app, keybinds::Message::Listen);
+    let third = app.device_session().expect("listening");
+    assert_ne!(second, third);
+
+    input(&mut app, escape());
+    assert_eq!(app.device_session(), None);
+    clicked(&mut app, "Listen again");
+    let fourth = app.device_session().expect("listening");
+    assert_ne!(third, fourth);
+}
+
+#[test]
+fn capture_box_pictures() {
+    let dark = theme::theme(ThemeChoice::Dark);
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo_with_game(temp.path());
+    send(
+        &mut app,
+        keybinds::Message::PickMap(Some("spaceship_weapons".into())),
+    );
+    select(
+        &mut app,
+        "spaceship_weapons",
+        "v_weapon_launch_missile",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, vec![vkb_l(), vkb_r()], 0);
+    testkit::snapshot(&mut sim(&app), &dark, "keybinds-stick-listening");
+
+    heard(&mut app, vkb_l(), "button4");
+    assert_eq!(pending(&app), 1);
+    testkit::snapshot(&mut sim(&app), &dark, "keybinds-stick-heard");
+
+    select(
+        &mut app,
+        "spaceship_weapons",
+        "v_attack1_group1",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, Vec::new(), 0);
+    testkit::snapshot(&mut sim(&app), &dark, "keybinds-stick-none");
+
+    select(
+        &mut app,
+        "spaceship_weapons",
+        "v_attack1_group1",
+        DeviceKind::Keyboard,
+    );
+    hold_left_alt(&mut app);
+    assert!(app.wants_input());
+    testkit::snapshot(&mut sim(&app), &dark, "keybinds-keyboard-held");
 }

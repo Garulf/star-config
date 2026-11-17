@@ -964,7 +964,7 @@ pub fn editor(theme: &Theme, status: text_editor::Status) -> text_editor::Style 
 
 pub mod binds {
     pub const MAP_LIST_WIDTH: f32 = 240.0;
-    pub const CAPTURE_HEIGHT: f32 = 72.0;
+    pub const CAPTURE_HEIGHT: f32 = 88.0;
     pub const QUICK_PICK_WIDTH: f32 = 40.0;
     pub const EDIT_SIDE_WIDTH: f32 = 320.0;
     pub const ACTION_PORTION: u16 = 12;

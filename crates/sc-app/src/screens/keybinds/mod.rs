@@ -1,5 +1,6 @@
 mod advanced;
 mod capture;
+mod devices;
 mod inputs;
 mod model;
 mod source;
@@ -10,6 +11,8 @@ pub use advanced::{
     ADVANCED_TAB, AdvancedMessage, BINDS_TAB, DevicePick, GAME_DEFAULT, NOT_A_NUMBER,
     NOT_CONNECTED, OptionField, POINT_RANGE, PointPart,
 };
+pub use capture::stops_listening;
+pub use devices::{DeviceSession, device_stream};
 pub use model::CellRef;
 pub use source::{CURRENT_LABEL, Source, SourceChoice, UNRECOGNISED, layout_name};
 
@@ -24,7 +27,7 @@ use crate::widgets::VirtualListState;
 use crate::work;
 use capture::{Capture, Outcome};
 use iced::{Element, Task};
-use inputs::{Known, STICKS, Typed, captures, judge};
+use inputs::{Known, STICKS, Typed, captures, input_caps, judge};
 use model::{Baseline, Line, Model};
 use sc_core::actionmaps::{ActionMaps, DeviceKind, Op, Slot, layout_file_name};
 use sc_core::backup::SnapshotId;
@@ -32,6 +35,7 @@ use sc_core::defaults::GameData;
 use sc_core::guard::Writer;
 use sc_core::safe_write::{Hash, LoadedFile};
 use sc_core::staging::{Document, Staged};
+use sc_input::{DeviceClass, DeviceInfo, Heard};
 use source::{Handoff, Loaded, Opened, WriteFailure};
 use std::fmt;
 use std::path::PathBuf;
@@ -44,7 +48,11 @@ pub const NOT_IN_BUILD: &str = "Not in this game version";
 pub const NO_GAME_DATA_NOTE: &str =
     "Game data unavailable: showing only the binds stored in your files.";
 pub const ADD_CAPTION: &str = "For actions that have no bind in this file yet. Use the action's name as the game writes it, for example v_toggle_mining_mode.";
-pub const CAPTURE_PROMPT: &str = "Press a key or a mouse button";
+pub const KEY_PROMPT: &str = "Press a key";
+pub const MOUSE_PROMPT: &str = "Press a mouse button here";
+pub const STICK_PROMPT: &str = "Press a button on your stick";
+pub const PAD_PROMPT: &str = "Press a button on your gamepad";
+pub const PICK_WITHOUT_DEVICE: &str = "Pick without the device";
 pub const UNKNOWN_KEY: &str = "This key has no known name. Type it below.";
 pub const CHANGED_AGAIN: &str = CHANGED_ON_DISK;
 pub const EMPTY_TITLE: &str = "No keybinds yet";
@@ -92,8 +100,39 @@ struct Edit {
     typed: String,
     listening: bool,
     hovered: bool,
-    note: Option<&'static str>,
+    note: Option<String>,
     capture: Capture,
+    /// The sticks or gamepads found and how many could not be opened, once the reader says.
+    devices: Option<(Vec<DeviceInfo>, usize)>,
+    /// What the last device press was and where it went.
+    heard: Option<String>,
+    /// The inputs to click instead of pressing, for a stick or gamepad cell.
+    picks_open: bool,
+}
+
+impl Edit {
+    fn new(cell: CellRef, slot: Slot, typed: String) -> Self {
+        Self {
+            cell,
+            slot,
+            typed,
+            listening: true,
+            hovered: false,
+            note: None,
+            capture: Capture::default(),
+            devices: None,
+            heard: None,
+            picks_open: false,
+        }
+    }
+
+    fn listen(&mut self) {
+        self.listening = true;
+        self.note = None;
+        self.capture = Capture::default();
+        self.devices = None;
+        self.heard = None;
+    }
 }
 
 #[derive(Default)]
@@ -163,6 +202,8 @@ pub struct State {
     saving: bool,
     tab: Tab,
     advanced: advanced::Advanced,
+    /// Counts each start of listening, so every listen reads devices afresh.
+    listen_generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -185,8 +226,20 @@ pub enum Message {
     Select(CellRef),
     ClosePanel,
     Input(iced::Event),
+    /// The sticks or gamepads a listening cell reads, sent once when reading starts.
+    /// `generation` names the listen the reader belongs to; others are ignored.
+    Devices {
+        generation: u64,
+        found: Vec<DeviceInfo>,
+        unreadable: usize,
+    },
+    Heard {
+        generation: u64,
+        heard: Heard,
+    },
     CaptureHover(bool),
     Listen,
+    TogglePicks,
     Typed(String),
     QuickPick(String),
     PickStick(SlotChoice),
@@ -236,6 +289,7 @@ impl State {
             saving: false,
             tab: Tab::Binds,
             advanced: advanced::Advanced::new(),
+            listen_generation: 0,
         }
     }
 
@@ -318,8 +372,39 @@ impl State {
 
     /// True while a keyboard or mouse cell is listening, so the shell sends raw input here
     /// and leaves its own shortcuts alone.
-    pub fn wants_input(&self) -> bool {
-        matches!(&self.panel, Panel::Edit(edit) if edit.listening) && self.writable()
+    pub fn wants_keys(&self) -> bool {
+        self.listening_edit()
+            .is_some_and(|edit| captures(edit.cell.kind))
+    }
+
+    /// The devices a listening stick or gamepad cell wants read.
+    pub fn listens_to(&self) -> Option<DeviceClass> {
+        match self.listening_edit()?.cell.kind {
+            DeviceKind::Joystick => Some(DeviceClass::Stick),
+            DeviceKind::Gamepad => Some(DeviceClass::Gamepad),
+            DeviceKind::Keyboard | DeviceKind::Mouse => None,
+        }
+    }
+
+    /// The device reading a listening stick or gamepad cell wants, new for each listen.
+    pub fn device_session(&self) -> Option<DeviceSession> {
+        self.listens_to().map(|class| DeviceSession {
+            class,
+            generation: self.listen_generation,
+        })
+    }
+
+    /// True when a device message comes from the reader of the listen going on now.
+    fn is_current(&self, generation: u64) -> bool {
+        self.device_session()
+            .is_some_and(|session| session.generation == generation)
+    }
+
+    fn listening_edit(&self) -> Option<&Edit> {
+        match &self.panel {
+            Panel::Edit(edit) if edit.listening && self.writable() => Some(edit),
+            _ => None,
+        }
     }
 
     fn writable(&self) -> bool {
@@ -413,11 +498,30 @@ impl State {
                 Action::none()
             }
             Message::Input(event) => self.input(&event),
+            Message::Devices {
+                generation,
+                found,
+                unreadable,
+            } => {
+                if self.is_current(generation)
+                    && let Panel::Edit(edit) = &mut self.panel
+                {
+                    edit.picks_open |= found.is_empty();
+                    edit.devices = Some((found, unreadable));
+                }
+                Action::none()
+            }
+            Message::Heard { generation, heard } => {
+                if self.is_current(generation) {
+                    self.heard(heard)
+                } else {
+                    Action::none()
+                }
+            }
             Message::Listen => {
                 if let Panel::Edit(edit) = &mut self.panel {
-                    edit.listening = captures(edit.cell.kind);
-                    edit.note = None;
-                    edit.capture = Capture::default();
+                    edit.listen();
+                    self.listen_generation = self.listen_generation.wrapping_add(1);
                 }
                 Action::none()
             }
@@ -460,6 +564,7 @@ impl State {
     fn edit_form(&mut self, message: Message) {
         match (&mut self.panel, message) {
             (Panel::Edit(edit), Message::CaptureHover(hovered)) => edit.hovered = hovered,
+            (Panel::Edit(edit), Message::TogglePicks) => edit.picks_open = !edit.picks_open,
             (Panel::Edit(edit), Message::Typed(typed) | Message::QuickPick(typed)) => {
                 edit.typed = typed;
             }
@@ -654,20 +759,21 @@ impl State {
                 kind: cell.kind,
                 instance: 1,
             });
-        let listening = captures(cell.kind);
-        self.panel = Panel::Edit(Edit {
-            cell,
-            slot,
-            typed,
-            listening,
-            hovered: false,
-            note: None,
-            capture: Capture::default(),
-        });
+        self.panel = Panel::Edit(Edit::new(cell, slot, typed));
+        self.listen_generation = self.listen_generation.wrapping_add(1);
     }
 
     fn input(&mut self, event: &iced::Event) -> Action<Message> {
-        if !self.wants_input() {
+        if self.listens_to().is_some() {
+            if stops_listening(event)
+                && let Panel::Edit(edit) = &mut self.panel
+            {
+                edit.listening = false;
+                edit.note = None;
+            }
+            return Action::none();
+        }
+        if !self.wants_keys() {
             return Action::none();
         }
         let Panel::Edit(edit) = &mut self.panel else {
@@ -681,7 +787,7 @@ impl State {
                 return Action::none();
             }
             Outcome::Unknown => {
-                edit.note = Some(UNKNOWN_KEY);
+                edit.note = Some(UNKNOWN_KEY.into());
                 return Action::none();
             }
             Outcome::Done(rest) => rest,
@@ -699,13 +805,85 @@ impl State {
                 self.stage(bind_op(&cell, input))
             }
             Typed::Empty | Typed::Invalid(_) => {
-                edit.note = Some(if cell.kind == DeviceKind::Mouse {
+                let note = if cell.kind == DeviceKind::Mouse {
                     MOUSE_ONLY
                 } else {
                     UNKNOWN_KEY
-                });
+                };
+                edit.note = Some(note.into());
                 Action::none()
             }
+        }
+    }
+
+    /// Binds a stick or gamepad press to the listening cell, on the stick the file names for
+    /// that device. A press the game would not accept keeps the cell listening.
+    fn heard(&mut self, heard: Heard) -> Action<Message> {
+        let Some(class) = self.listens_to() else {
+            return Action::none();
+        };
+        let Panel::Edit(edit) = &self.panel else {
+            return Action::none();
+        };
+        let cell = edit.cell.clone();
+        let (slot, note) = match class {
+            DeviceClass::Gamepad => (
+                Slot {
+                    kind: DeviceKind::Gamepad,
+                    instance: 1,
+                },
+                None,
+            ),
+            DeviceClass::Stick => {
+                let ids = self
+                    .model
+                    .as_ref()
+                    .map(Model::stick_ids)
+                    .unwrap_or_default();
+                let (instance, note) = devices::stick_for(&ids, edit.slot.instance, &heard.device);
+                (
+                    Slot {
+                        kind: DeviceKind::Joystick,
+                        instance,
+                    },
+                    note,
+                )
+            }
+        };
+        let judged = judge(slot, &heard.input, self.known(&cell));
+        let caps = match &judged {
+            Typed::Valid(input) => input_caps(self.game(), input).join(" + "),
+            Typed::Empty | Typed::Invalid(_) => String::new(),
+        };
+        let Panel::Edit(edit) = &mut self.panel else {
+            return Action::none();
+        };
+        let Typed::Valid(input) = judged else {
+            edit.note = Some(format!(
+                "Heard \"{}\" on {}, which is not an input the game knows. Press another.",
+                heard.input, heard.device.name
+            ));
+            return Action::none();
+        };
+        let bound_to = match class {
+            DeviceClass::Stick => format!(", bound to {}", inputs::stick_label(slot)),
+            DeviceClass::Gamepad => String::new(),
+        };
+        let said = format!("Heard {caps} on {}{bound_to}", heard.device.name);
+        edit.slot = slot;
+        edit.listening = false;
+        edit.typed = heard.input;
+        edit.note = note;
+        let staged = self.stage_op(bind_op(&cell, input));
+        match staged {
+            Ok(true) => {
+                if let Panel::Edit(edit) = &mut self.panel {
+                    edit.heard = Some(said);
+                }
+                Action::none()
+            }
+            Ok(false) => Action::none(),
+            Err(toast) => Action::toast(toast),
         }
     }
 
@@ -794,19 +972,27 @@ impl State {
     }
 
     fn stage(&mut self, op: Op) -> Action<Message> {
+        match self.stage_op(op) {
+            Ok(_) => Action::none(),
+            Err(toast) => Action::toast(toast),
+        }
+    }
+
+    /// Whether the change was staged; a document that cannot be edited stages nothing.
+    fn stage_op(&mut self, op: Op) -> Result<bool, Toast> {
         let Doc::Ready {
             staged,
             writable: true,
         } = &mut self.doc
         else {
-            return Action::none();
+            return Ok(false);
         };
         match staged.stage(op) {
             Ok(()) => {
                 self.refresh();
-                Action::none()
+                Ok(true)
             }
-            Err(err) => Action::toast(Toast::error(format!(
+            Err(err) => Err(Toast::error(format!(
                 "Could not make that change: {}",
                 words(&err)
             ))),

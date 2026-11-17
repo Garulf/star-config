@@ -220,6 +220,25 @@ pub fn quick_buttons() -> Vec<String> {
     (1..=QUICK_BUTTONS).map(|n| format!("button{n}")).collect()
 }
 
+/// The gamepad inputs to click, each label once. Where a trigger has an axis and a button
+/// name, the button is offered.
+pub fn gamepad_picks() -> Vec<&'static str> {
+    GAMEPAD
+        .iter()
+        .enumerate()
+        .filter(|(index, (_, label))| GAMEPAD[index + 1..].iter().all(|(_, later)| later != label))
+        .map(|(_, (name, _))| *name)
+        .collect()
+}
+
+/// The label for a gamepad input name, or the name as written.
+pub fn gamepad_label(name: &str) -> &str {
+    GAMEPAD
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map_or(name, |(_, label)| label)
+}
+
 pub fn quick_hats() -> Vec<String> {
     HAT_DIRECTIONS
         .iter()
@@ -464,5 +483,24 @@ mod tests {
         assert_eq!(input_caps(None, "kb1_mouse3"), ["Middle click"]);
         assert_eq!(input_caps(None, "js2_button5"), ["Button 5"]);
         assert_eq!(input_caps(None, "odd"), ["odd"]);
+    }
+
+    #[test]
+    fn gamepad_picks_name_each_input_once() {
+        let picks = gamepad_picks();
+        let labels: Vec<&str> = picks.iter().map(|name| gamepad_label(name)).collect();
+        for (index, label) in labels.iter().enumerate() {
+            assert!(!labels[index + 1..].contains(label), "{label}");
+        }
+        assert!(picks.contains(&"triggerl_btn"));
+        assert!(picks.contains(&"triggerr_btn"));
+        assert!(!picks.contains(&"triggerl"));
+        assert!(picks.contains(&"thumblx"));
+        assert!(picks.contains(&"shoulderl"));
+        assert!(
+            picks
+                .iter()
+                .all(|name| matches!(judge(GP, name), Typed::Valid(_)))
+        );
     }
 }

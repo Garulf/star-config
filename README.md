@@ -28,7 +28,7 @@ lets you pick a channel, and gives each kind of file its own screen.
 |---|---|
 | Overview | See the state of the install at a glance: StarStrings, binds, shader caches, last snapshot, what needs attention. |
 | Config | Edit `user.cfg`, and every setting in the game's own menu under the menu's names and groups. Console variables star-config knows get a proper control for their type. Lines it does not know are kept as they are and can still be edited as text. |
-| Keybinds | See every action the game has, with its in-game name and default bind beside yours, rebind by pressing the key or button, unbind, add a bind by action name, spot conflicts, swap joystick numbers, and edit exported layouts. Advanced controls covers inversion, exponents, response curves and deadzones per device. |
+| Keybinds | See every action the game has, with its in-game name and default bind beside yours, rebind by pressing the key or button on your keyboard, mouse, stick or gamepad, unbind, add a bind by action name, spot conflicts, swap joystick numbers, and edit exported layouts. Advanced controls covers inversion, exponents, response curves and deadzones per device. |
 | Head tracking and comms | Change the game's own head tracking, VoIP and FOIP settings in `attributes.xml`. star-config does no tracking itself. |
 | StarStrings | Install, update and remove [StarStrings](https://github.com/MrKraken/StarStrings), and see when a game patch means it needs reinstalling. |
 | Screenshots | Browse captures from every channel by day, favourite, rename and archive them, and copy one to the clipboard at full size or shrunk to fit a chat upload limit. |

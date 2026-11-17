@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 sc-core.workspace = true
+sc-input.workspace = true
 iced.workspace = true
 tokio.workspace = true
 rfd.workspace = true
