@@ -79,36 +79,44 @@ fn is_known(kind: DeviceKind, rest: &str, game: Option<&GameData>) -> bool {
     let Some((last, modifiers)) = parts.split_last() else {
         return false;
     };
-    let named = |part: &str| game.is_some_and(|game| game_names(game, kind, part));
+    let named = |kinds: &[DeviceKind], part: &str| {
+        game.is_some_and(|game| {
+            kinds
+                .iter()
+                .any(|kind| game.input_names.contains_key(&(*kind, part.to_string())))
+        })
+    };
     let modifiers_ok = modifiers.iter().all(|part| {
         capture::is_modifier(part)
-            || named(part)
+            || named(modifier_kinds(kind), part)
             || (kind == DeviceKind::Gamepad && is_gamepad(part))
     });
     match kind {
         DeviceKind::Keyboard => {
-            parts
-                .iter()
-                .all(|part| capture::is_key(part) || capture::is_modifier(part) || named(part))
+            let keyboard = [DeviceKind::Keyboard];
+            let key_part = |part: &str| {
+                capture::is_key(part) || capture::is_modifier(part) || named(&keyboard, part)
+            };
+            let either = [DeviceKind::Keyboard, DeviceKind::Mouse];
+            (modifiers.iter().all(|part| key_part(part))
+                && (key_part(last) || named(&either, last)))
                 || (modifiers_ok && capture::is_mouse(last))
         }
-        DeviceKind::Mouse => modifiers_ok && (capture::is_mouse(last) || named(last)),
-        DeviceKind::Joystick => modifiers_ok && (is_joystick(last) || named(last)),
-        DeviceKind::Gamepad => modifiers_ok && (is_gamepad(last) || named(last)),
+        DeviceKind::Mouse => {
+            modifiers_ok && (capture::is_mouse(last) || named(&[DeviceKind::Mouse], last))
+        }
+        DeviceKind::Joystick => modifiers_ok && (is_joystick(last) || named(&[kind], last)),
+        DeviceKind::Gamepad => modifiers_ok && (is_gamepad(last) || named(&[kind], last)),
     }
 }
 
-/// The keyboard column takes mouse buttons and the mouse column keyboard modifiers, so
-/// either one's names count for both.
-fn game_names(game: &GameData, kind: DeviceKind, part: &str) -> bool {
-    let kinds: &[DeviceKind] = match kind {
-        DeviceKind::Keyboard | DeviceKind::Mouse => &[DeviceKind::Keyboard, DeviceKind::Mouse],
+/// Keyboard keys hold down for both the keyboard and the mouse column.
+fn modifier_kinds(kind: DeviceKind) -> &'static [DeviceKind] {
+    match kind {
+        DeviceKind::Keyboard | DeviceKind::Mouse => &[DeviceKind::Keyboard],
         DeviceKind::Gamepad => &[DeviceKind::Gamepad],
         DeviceKind::Joystick => &[DeviceKind::Joystick],
-    };
-    kinds
-        .iter()
-        .any(|kind| game.input_names.contains_key(&(*kind, part.to_string())))
+    }
 }
 
 fn is_gamepad(name: &str) -> bool {
@@ -349,13 +357,20 @@ mod tests {
             );
             assert!(matches!(judge(slot, typed), Typed::Invalid(_)), "{typed}");
         }
+        for (slot, typed) in [
+            (GP, "escape"),
+            (JS2, "thumbl_up"),
+            (MOUSE, "escape"),
+            (KB, "maxis_z+f"),
+        ] {
+            assert!(
+                matches!(super::judge(slot, typed, known), Typed::Invalid(_)),
+                "{typed}"
+            );
+        }
         assert!(matches!(
-            super::judge(GP, "escape", known),
-            Typed::Invalid(_)
-        ));
-        assert!(matches!(
-            super::judge(JS2, "thumbl_up", known),
-            Typed::Invalid(_)
+            super::judge(MOUSE, "escape+mouse1_2", known),
+            Typed::Valid(_)
         ));
     }
 
