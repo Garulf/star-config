@@ -1,6 +1,6 @@
 //! Plain names and tidied descriptions for the cvars in the catalogue.
 
-use sc_core::catalog::{attrs, cvars::Cvar};
+use sc_core::catalog::{cvars::Cvar, layout};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -50,11 +50,16 @@ const LABELS: [(&str, &str); 22] = [
     ("r_ssdo", "Ambient occlusion"),
 ];
 
-/// The row label for a cvar: the head tracking attribute's label when it has one, then the
-/// table above, then the cvar name itself.
+/// The row label for a cvar: the wording the layout gives its attribute, then the table
+/// above, then the cvar name itself.
 pub fn label(cvar: &'static Cvar) -> &'static str {
-    if let Some(known) = cvar.attribute.as_deref().and_then(attrs::find) {
-        return &known.label;
+    let wording = cvar
+        .attribute
+        .as_deref()
+        .and_then(layout::entry)
+        .and_then(|entry| entry.fallback.as_deref());
+    if let Some(label) = wording {
+        return label;
     }
     LABELS
         .iter()

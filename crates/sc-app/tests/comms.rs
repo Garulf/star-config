@@ -38,6 +38,26 @@ fn fixture_with(attributes: Option<&str>, theme: ThemeChoice) -> Fixture {
     }
 }
 
+fn game_fixture(attributes: &str) -> Fixture {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_with_channels(temp.path(), &["LIVE"]);
+    let channel = ctx.channel.clone().unwrap();
+    testkit::write_build(&channel, "4.1.0", "1234");
+    testkit::seed_game_data_with(
+        &ctx,
+        include_str!("fixtures/config_game/attributes.xml"),
+        include_str!("fixtures/config_game/global.ini"),
+    );
+    testkit::write_channel_files(&channel, None, Some(attributes.as_bytes()));
+    let mut app = App::with(ctx);
+    feed(&mut app, [Message::Navigate(Screen::Comms)]);
+    Fixture {
+        _temp: temp,
+        app,
+        channel,
+    }
+}
+
 fn fixture(attributes: &str) -> Fixture {
     fixture_with(Some(attributes), ThemeChoice::Dark)
 }
@@ -90,6 +110,34 @@ fn catalogue_groups_and_typed_controls_render() {
     ] {
         assert!(has(&fx.app, text), "{text}");
     }
+}
+
+#[test]
+fn comms_labels_survive_without_game_data() {
+    let fx = fixture(&demo_attributes());
+    for text in [
+        "Source",
+        "Enabled",
+        "Position smoothing",
+        "Off while seated",
+        "Off in inventory",
+        "HEAD TRACKING: THIRD PERSON",
+    ] {
+        assert!(has(&fx.app, text), "{text}");
+    }
+}
+
+#[test]
+fn comms_takes_in_game_labels_and_defaults_from_the_build() {
+    let fx = game_fixture(&demo_attributes());
+    assert!(has(&fx.app, "Tracking device"), "label from the build");
+    assert!(has(&fx.app, "Smoothing of position"));
+    assert!(
+        has(&fx.app, "Enabled"),
+        "no label key: our fallback wording"
+    );
+    assert!(!has(&fx.app, "Source"));
+    assert!(has(&fx.app, "HEAD TRACKING: WHEN IT IS OFF"));
 }
 
 #[test]

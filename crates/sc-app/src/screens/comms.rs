@@ -3,6 +3,7 @@ use super::edits::{self, Carry, Edits, Pending, Target, Written};
 use super::typed::{self, Kind};
 use super::words::{GAME_RUNNING, words};
 use crate::context::Context;
+use crate::game_data::Loaded as GameLoaded;
 use crate::screen::{Action, Origin, Screen, Toast, ToastKind};
 use crate::theme::{ButtonKind, layout, space};
 use crate::widgets::{
@@ -13,15 +14,28 @@ use crate::{icons, work};
 use iced::widget::{Column, row};
 use iced::{Alignment, Element, Task};
 use sc_core::attributes::{Attributes, Op};
-use sc_core::catalog::attrs::{self, AttrKind, KnownAttr};
+use sc_core::catalog::layout as options;
+use sc_core::catalog::layout::{Entry, Kind as LayoutKind};
+use sc_core::defaults::GameData;
 use sc_core::error::Result;
 use sc_core::staging::Staged;
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 const SNAPSHOT_LABEL: &str = "Head tracking and comms changes";
 const SUBTITLE: &str = "These are the game's own settings. star-config does not track your head. It sets what the game does with a tracker you already use.";
 const SOURCE: &str = "HeadtrackingSource";
 const SOURCE_HINT: &str = "Which tracker the game uses. What each number means has not been confirmed, so this is the number stored in the file.";
+const COMMS_KEYWORDS: [&str; 8] = [
+    "headtracking",
+    "hmd",
+    "voip",
+    "foip",
+    "faceware",
+    "comms",
+    "voice",
+    "mic",
+];
 const OTHER_SETTINGS: &str = "Other settings in this file";
 const ELSEWHERE: &str = "This name has no head tracking or comms word in it, so it will be listed on the Config screen under Game settings.";
 
@@ -44,10 +58,23 @@ struct NewSetting {
     value: String,
 }
 
+struct Group {
+    title: String,
+    rows: Vec<Row>,
+}
+
+struct Row {
+    entry: &'static Entry,
+    label: String,
+    default: Option<String>,
+    choices: Vec<(String, String)>,
+}
+
 pub struct State {
     seq: u64,
     channel: Option<PathBuf>,
     attrs: AttrFile,
+    groups: Vec<Group>,
     applying: bool,
     adding: Option<NewSetting>,
 }
@@ -55,6 +82,7 @@ pub struct State {
 #[derive(Debug, Clone)]
 pub enum Message {
     Loaded(u64, Carry<Loaded>),
+    GameLoaded(u64, GameLoaded),
     Set(String, String),
     Remove(String),
     OpenAdd,
@@ -65,25 +93,77 @@ pub enum Message {
     Applied(Carry<Applied>),
 }
 
-fn kind_of(attr: &KnownAttr) -> Kind<'static> {
-    match &attr.kind {
-        AttrKind::Bool => Kind::Bool,
-        AttrKind::Float { min, max, step } => Kind::Range {
+fn kind_of(row: &Row) -> Kind<'_> {
+    match &row.entry.kind {
+        LayoutKind::Toggle => Kind::Bool,
+        LayoutKind::Slider { min, max, step } => Kind::Range {
             min: *min,
             max: *max,
             step: *step,
         },
-        AttrKind::RawInt => Kind::Number,
-        AttrKind::Text => Kind::Text,
+        LayoutKind::Number => Kind::Number,
+        LayoutKind::Text => Kind::Text,
+        LayoutKind::Choice(_) => Kind::Choice(Cow::Borrowed(&row.choices)),
     }
 }
 
-fn hint_of(attr: &'static KnownAttr) -> Option<&'static str> {
-    if attr.name == SOURCE {
+fn hint_of(entry: &'static Entry) -> Option<&'static str> {
+    if entry.name == SOURCE {
         Some(SOURCE_HINT)
     } else {
-        attr.note.as_deref()
+        entry.note.as_deref()
     }
+}
+
+/// Head tracking and comms entries of the layout, by section, with the game's own wording
+/// when the build's strings are known and our fallback wording when not.
+fn groups(game: Option<&GameData>) -> Vec<Group> {
+    let sections = options::layout().tabs.iter().flat_map(|tab| &tab.sections);
+    sections
+        .filter_map(|section| {
+            let rows: Vec<Row> = section
+                .entries
+                .iter()
+                .filter(|entry| is_comms_related(&entry.name))
+                .map(|entry| row_of(entry, game))
+                .collect();
+            let title = match game {
+                Some(game) => game.label(section.key.as_deref(), &section.fallback),
+                None => section.fallback.clone(),
+            };
+            (!rows.is_empty()).then_some(Group { title, rows })
+        })
+        .collect()
+}
+
+fn row_of(entry: &'static Entry, game: Option<&GameData>) -> Row {
+    let fallback = entry.fallback.as_deref().unwrap_or(&entry.name);
+    let Some(game) = game else {
+        return Row {
+            entry,
+            label: fallback.to_string(),
+            default: None,
+            choices: Vec::new(),
+        };
+    };
+    let choices = match &entry.kind {
+        LayoutKind::Choice(choices) => choices
+            .iter()
+            .map(|(value, key)| (value.clone(), game.label(Some(key), value)))
+            .collect(),
+        _ => Vec::new(),
+    };
+    Row {
+        entry,
+        label: game.label(entry.label_key.as_deref(), fallback),
+        default: game.setting(&entry.name).map(|s| s.default.clone()),
+        choices,
+    }
+}
+
+pub fn is_comms_related(name: &str) -> bool {
+    let name = name.to_lowercase();
+    COMMS_KEYWORDS.iter().any(|keyword| name.contains(keyword))
 }
 
 fn was(base: Option<&str>, current: Option<&str>) -> Option<Was> {
@@ -91,7 +171,7 @@ fn was(base: Option<&str>, current: Option<&str>) -> Option<Was> {
 }
 
 fn is_other(name: &str) -> bool {
-    attrs::find(name).is_none() && attrs::is_comms_related(name)
+    options::entry(name).is_none() && is_comms_related(name)
 }
 
 impl State {
@@ -100,6 +180,7 @@ impl State {
             seq: 0,
             channel: None,
             attrs: AttrFile::Loading,
+            groups: groups(None),
             applying: false,
             adding: None,
         }
@@ -113,20 +194,30 @@ impl State {
             self.attrs = AttrFile::Loading;
             self.applying = false;
         }
+        if !same_channel {
+            self.groups = groups(None);
+        }
         let Some(channel) = channel else {
             self.channel = None;
             return Task::none();
         };
         let seq = self.seq;
-        work::background(
-            move || {
-                Carry::new(Loaded {
-                    channel: channel.dir.clone(),
-                    attrs: attr_edit::load(&channel.attributes_xml()),
-                })
-            },
-            move |loaded| Message::Loaded(seq, loaded),
-        )
+        let (cached, read_game) = attr_edit::game_data(ctx);
+        if cached.is_some() {
+            self.groups = groups(attr_edit::game_of(cached.as_ref()));
+        }
+        Task::batch([
+            work::background(
+                move || {
+                    Carry::new(Loaded {
+                        channel: channel.dir.clone(),
+                        attrs: attr_edit::load(&channel.attributes_xml()),
+                    })
+                },
+                move |loaded| Message::Loaded(seq, loaded),
+            ),
+            read_game.map(move |loaded| Message::GameLoaded(seq, loaded)),
+        ])
     }
 
     pub fn update(&mut self, message: Message, _ctx: &Context) -> Action<Message> {
@@ -138,6 +229,12 @@ impl State {
                 {
                     self.channel = Some(loaded.channel);
                     self.attrs = loaded.attrs;
+                }
+                Action::none()
+            }
+            Message::GameLoaded(seq, loaded) => {
+                if seq == self.seq {
+                    self.groups = groups(attr_edit::game_of(Some(&loaded)));
                 }
                 Action::none()
             }
@@ -322,13 +419,10 @@ impl State {
         if !doc.editable && !self.attrs.is_away() {
             body = body.push(banner(ToastKind::Warning, attr_edit::NOT_RECOGNISED, None));
         }
-        for group in attrs::groups() {
-            let items: Vec<Element<'a, Message>> = attrs::all()
-                .iter()
-                .filter(|attr| attr.group == group)
-                .map(|attr| known_row(doc, attr))
-                .collect();
-            body = body.push(section(group, rows(items)));
+        for group in &self.groups {
+            let items: Vec<Element<'a, Message>> =
+                group.rows.iter().map(|row| known_row(doc, row)).collect();
+            body = body.push(section(&group.title, rows(items)));
         }
         body.push(section(OTHER_SETTINGS, rows(self.other_rows(doc))))
             .into()
@@ -371,7 +465,7 @@ impl State {
         };
         let name = adding.name.trim();
         let ready = !name.is_empty();
-        let note = (ready && !attrs::is_comms_related(name) && attrs::find(name).is_none())
+        let note = (ready && !is_comms_related(name) && options::entry(name).is_none())
             .then_some(ELSEWHERE);
         let mut value =
             text_field("Value", &adding.value, Message::AddValue).width(layout::CONTROL_WIDTH);
@@ -404,22 +498,23 @@ impl State {
     }
 }
 
-fn known_row<'a>(doc: Doc<'a>, attr: &'static KnownAttr) -> Element<'a, Message> {
-    let current = doc.get(&attr.name);
-    let base = doc.was(&attr.name);
-    let name = attr.name.clone();
+fn known_row<'a>(doc: Doc<'a>, row: &'a Row) -> Element<'a, Message> {
+    let name = &row.entry.name;
+    let current = doc.get(name);
+    let base = doc.was(name);
+    let key = name.clone();
     let on_set = doc
         .editable
-        .then_some(move |value: String| Message::Set(name.clone(), value));
-    let control = typed::control(kind_of(attr), current, attr.default.as_deref(), on_set);
+        .then_some(move |value: String| Message::Set(key.clone(), value));
+    let control = typed::control(kind_of(row), current, row.default.as_deref(), on_set);
     optional_row(
         OptionalRow {
-            label: &attr.label,
-            name: Some(&attr.name),
-            hint: hint_of(attr),
+            label: &row.label,
+            name: Some(name),
+            hint: hint_of(row.entry),
             set: current.is_some(),
             was: was(base, current),
-            remove: doc.editable.then(|| Message::Remove(attr.name.clone())),
+            remove: doc.editable.then(|| Message::Remove(name.clone())),
         },
         control,
     )
@@ -456,7 +551,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn other_settings_are_comms_related_and_not_in_the_catalogue() {
+    fn other_settings_are_comms_related_and_not_in_the_layout() {
         assert!(is_other("VoipPushToTalk"));
         assert!(!is_other("HeadtrackingToggle"));
         assert!(!is_other("FOV"));
@@ -464,8 +559,51 @@ mod tests {
 
     #[test]
     fn source_gets_the_unconfirmed_note() {
-        let source = attrs::find(SOURCE).unwrap();
+        let source = options::entry(SOURCE).unwrap();
         assert_eq!(hint_of(source), Some(SOURCE_HINT));
-        assert!(matches!(kind_of(source), Kind::Number));
+        let row = row_of(source, None);
+        assert!(matches!(kind_of(&row), Kind::Number));
+        assert_eq!(row.label, "Source");
+    }
+
+    #[test]
+    fn groups_follow_the_layout_sections_with_fallback_wording() {
+        let groups = groups(None);
+        let titles: Vec<&str> = groups.iter().map(|g| g.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Head tracking",
+                "Head tracking: when it is off",
+                "Head tracking: third person"
+            ]
+        );
+        let count: usize = groups.iter().map(|g| g.rows.len()).sum();
+        assert_eq!(count, 18);
+        assert!(
+            groups
+                .iter()
+                .flat_map(|g| &g.rows)
+                .all(|r| r.default.is_none())
+        );
+    }
+
+    #[test]
+    fn is_comms_related_matches_keywords_case_insensitively() {
+        for name in [
+            "VoipVolume",
+            "MicThreshold",
+            "FOIPEnabled",
+            "HMDMode",
+            "FacewareCamera",
+            "CommsChannel",
+            "VoiceActivation",
+            "HEADTRACKINGSOURCE",
+        ] {
+            assert!(is_comms_related(name), "{name}");
+        }
+        for name in ["Brightness", "FOV", ""] {
+            assert!(!is_comms_related(name), "{name}");
+        }
     }
 }

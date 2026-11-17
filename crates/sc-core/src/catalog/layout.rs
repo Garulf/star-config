@@ -233,7 +233,6 @@ fn distinct_values(choices: &[(String, String)]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::attrs::{self, AttrKind};
     use crate::defaults::Sources;
     use crate::localization::Strings;
 
@@ -378,27 +377,131 @@ fallback = "A"
         assert_eq!(placed.absent.len(), all_entries().len());
     }
 
+    const GUESS: &str = "Range is a guess. Type a value to go outside it.";
+    const SOURCE_NOTE: &str =
+        "Which number means which device is not confirmed. Check the in-game menu.";
+    const HEAD: &str = "Head tracking";
+    const OFF: &str = "Head tracking: when it is off";
+    const THIRD: &str = "Head tracking: third person";
+
+    fn toggle(name: &'static str, label: &'static str, section: &'static str) -> Former {
+        Former {
+            name,
+            label,
+            section,
+            kind: Kind::Toggle,
+            note: None,
+        }
+    }
+
+    fn slider(
+        name: &'static str,
+        label: &'static str,
+        (min, max, step): (f64, f64, f64),
+    ) -> Former {
+        Former {
+            name,
+            label,
+            section: HEAD,
+            kind: Kind::Slider { min, max, step },
+            note: Some(GUESS),
+        }
+    }
+
+    struct Former {
+        name: &'static str,
+        label: &'static str,
+        section: &'static str,
+        kind: Kind,
+        note: Option<&'static str>,
+    }
+
+    /// The 18 settings the old `attrs.toml` described, as they stood when it was retired.
+    fn former_catalogue() -> Vec<Former> {
+        vec![
+            Former {
+                name: "HeadtrackingSource",
+                label: "Source",
+                section: HEAD,
+                kind: Kind::Number,
+                note: Some(SOURCE_NOTE),
+            },
+            toggle("HeadtrackingToggle", "Enabled", HEAD),
+            toggle(
+                "HeadtrackingToggleAutoCalibrate",
+                "Recalibrate when enabled",
+                HEAD,
+            ),
+            slider(
+                "HeadtrackingGlobalSmoothingPosition",
+                "Position smoothing",
+                (0.0, 1.0, 0.01),
+            ),
+            slider(
+                "HeadtrackingGlobalSmoothingRotation",
+                "Rotation smoothing",
+                (0.0, 1.0, 0.01),
+            ),
+            slider(
+                "HeadtrackingInactivityTime",
+                "Inactivity time",
+                (0.0, 30.0, 0.5),
+            ),
+            toggle(
+                "HeadtrackingEnableSeatPositionOffset",
+                "Seat position offset",
+                HEAD,
+            ),
+            toggle("HeadtrackingEnableRollSeat", "Roll while seated", HEAD),
+            toggle("HeadtrackingEnableRollFPS", "Roll on foot", HEAD),
+            toggle(
+                "HeadtrackingHoldUseRawDuringHold",
+                "Raw values while held",
+                HEAD,
+            ),
+            toggle("HeadtrackingDisableDuringSeat", "Off while seated", OFF),
+            toggle("HeadtrackingDisableDuringWalking", "Off on foot", OFF),
+            toggle("HeadtrackingDisableDuringADS", "Off while aiming", OFF),
+            toggle(
+                "HeadtrackingDisableDuringVehicleAds",
+                "Off while aiming in a vehicle",
+                OFF,
+            ),
+            toggle("HeadtrackingDisableDuringMobiGlas", "Off in mobiGlas", OFF),
+            toggle(
+                "HeadtrackingDisableDuringIM",
+                "Off in interaction mode",
+                OFF,
+            ),
+            toggle(
+                "HeadtrackingThirdPersonCameraToggle",
+                "Third person camera",
+                THIRD,
+            ),
+            toggle(
+                "HeadtrackingThirdPersonDisableDuringInventory",
+                "Off in inventory",
+                THIRD,
+            ),
+        ]
+    }
+
     #[test]
     fn former_attrs_catalogue_is_covered() {
-        assert_eq!(attrs::all().len(), 18);
-        for attr in attrs::all() {
-            let entry = entry(&attr.name).unwrap_or_else(|| panic!("{} is missing", attr.name));
-            let expected = match attr.kind {
-                AttrKind::Bool => Kind::Toggle,
-                AttrKind::Float { min, max, step } => Kind::Slider { min, max, step },
-                AttrKind::RawInt => Kind::Number,
-                AttrKind::Text => Kind::Text,
-            };
-            assert_eq!(entry.kind, expected, "{}", attr.name);
-            assert_eq!(entry.fallback.as_deref(), Some(attr.label.as_str()));
-            assert_eq!(entry.note, attr.note, "{}", attr.name);
+        let former = former_catalogue();
+        assert_eq!(former.len(), 18);
+        for attr in &former {
+            let entry = entry(attr.name).unwrap_or_else(|| panic!("{} is missing", attr.name));
+            assert_eq!(entry.kind, attr.kind, "{}", attr.name);
+            assert_eq!(entry.fallback.as_deref(), Some(attr.label), "{}", attr.name);
+            assert_eq!(entry.note.as_deref(), attr.note, "{}", attr.name);
             let section = layout()
                 .tabs
                 .iter()
                 .flat_map(|tab| &tab.sections)
                 .find(|section| section.entries.iter().any(|e| e.name == attr.name))
                 .unwrap();
-            assert_eq!(section.fallback, attr.group, "{}", attr.name);
+            assert_eq!(section.fallback, attr.section, "{}", attr.name);
         }
     }
 

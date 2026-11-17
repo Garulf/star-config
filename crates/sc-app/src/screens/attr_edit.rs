@@ -4,12 +4,16 @@
 use super::edits::{Edits, changed_keys};
 use super::units::thousands;
 use super::words::words;
+use crate::context::Context;
+use crate::game_data::Loaded as GameLoaded;
 use crate::screen::ToastKind;
 use crate::theme::{self, layout, size, space};
 use crate::widgets::{banner, change_marker, divider, hint, label, text_field};
+use crate::work;
 use iced::widget::{column, container, row, scrollable, text};
-use iced::{Alignment, Element, Length, Padding};
+use iced::{Alignment, Element, Length, Padding, Task};
 use sc_core::attributes::{AttrEntry, Attributes};
+use sc_core::defaults::{GameData, Unavailable};
 use sc_core::error::Error;
 use sc_core::staging::{Document, Staged};
 use sc_core::xml_edit;
@@ -121,6 +125,39 @@ pub fn load(path: &Path) -> AttrFile {
             }
         }
         Err(err) => AttrFile::Unreadable(format!("attributes.xml cannot be read: {}", words(&err))),
+    }
+}
+
+/// The channel's game data when it is already read, else a task that reads it. The caller
+/// shows `GAME_DATA_LOADING` until the task delivers.
+pub fn game_data(ctx: &Context) -> (Option<GameLoaded>, Task<GameLoaded>) {
+    let Some(channel) = ctx.channel.clone() else {
+        return (None, Task::none());
+    };
+    let store = ctx.game_data();
+    if let Some(cached) = store.cached(&channel) {
+        return (Some(cached), Task::none());
+    }
+    let cache = ctx.dirs.game_data();
+    let read = work::background(move || store.load(&channel, &cache), |loaded| loaded);
+    (None, read)
+}
+
+pub fn game_of(loaded: Option<&GameLoaded>) -> Option<&GameData> {
+    let result: &Result<GameData, Unavailable> = loaded?;
+    result.as_ref().ok()
+}
+
+/// Why the game's own settings are not shown, without the Keybinds screen's wording.
+pub fn unavailable_reason(unavailable: &Unavailable) -> String {
+    match unavailable {
+        Unavailable::NoArchive => "This channel has no Data.p4k.".to_string(),
+        Unavailable::NoBuildId => "This channel has no build manifest.".to_string(),
+        Unavailable::Unreadable(reason) => {
+            format!("The game's Data.p4k could not be read ({reason}).")
+        }
+        Unavailable::Missing(entry) => format!("The game's Data.p4k has no {entry}."),
+        Unavailable::Encrypted(entry) => format!("{entry} in the game's Data.p4k is encrypted."),
     }
 }
 

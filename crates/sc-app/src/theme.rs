@@ -42,6 +42,8 @@ pub mod layout {
     pub const ROW_ACTION_WIDTH: f32 = 32.0;
     /// A dense list row that holds a text field.
     pub const EDIT_ROW_HEIGHT: f32 = 48.0;
+    /// A line of the Game settings list: a label, a name and up to two hint lines.
+    pub const GAME_ROW_HEIGHT: f32 = 64.0;
     pub const NUMBER_WIDTH: f32 = 96.0;
     pub const VALUE_WIDTH: f32 = 40.0;
     pub const WIDE_CONTROL_WIDTH: f32 = 360.0;

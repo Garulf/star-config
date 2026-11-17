@@ -4,13 +4,14 @@ use crate::theme::{self, layout, space};
 use crate::widgets::{muted, pick_list, slider, text_field, toggle};
 use iced::widget::{container, row};
 use iced::{Alignment, Element, Length};
+use std::borrow::Cow;
 use std::fmt;
 
 pub enum Kind<'a> {
     Bool,
     Range { min: f64, max: f64, step: f64 },
     Number,
-    Choice(&'a [(String, String)]),
+    Choice(Cow<'a, [(String, String)]>),
     Text,
 }
 
@@ -46,7 +47,7 @@ where
             None => read_only(value.or(default), layout::NUMBER_WIDTH),
         },
         Kind::Number => field(value, default, layout::NUMBER_WIDTH, on_set),
-        Kind::Choice(options) => choice(options, value, default, on_set),
+        Kind::Choice(options) => choice(&options, value, default, on_set),
         Kind::Text => field(value, default, layout::CONTROL_WIDTH, on_set),
     }
 }
@@ -142,7 +143,7 @@ fn read_only<'a, M: 'a>(shown: Option<&'a str>, width: f32) -> Element<'a, M> {
 }
 
 fn choice<'a, M, F>(
-    options: &'a [(String, String)],
+    options: &[(String, String)],
     value: Option<&'a str>,
     default: Option<&'a str>,
     on_set: Option<F>,

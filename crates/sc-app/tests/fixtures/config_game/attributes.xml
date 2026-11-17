@@ -1,0 +1,15 @@
+<Attributes Version="35">
+ <Attr name="HeadtrackingSource" cvar="g_headtrackingSource" value="0"/>
+ <Attr name="HeadtrackingToggle" cvar="g_headtrackingToggleEnabled" value="0"/>
+ <Attr name="HeadtrackingGlobalSmoothingPosition" cvar="g_headtrackingGlobalSmoothingPosition" value="0.0"/>
+ <Attr name="HeadtrackingInactivityTime" cvar="g_headtrackingInactivityTime" value="2.0"/>
+ <Attr name="HeadtrackingDisableDuringWalking" cvar="g_headtrackingToggleDisableDuringWalking" value="1"/>
+ <Attr name="HeadtrackingThirdPersonCameraToggle" cvar="g_headtrackingThirdPersonCameraEnabled" value="0"/>
+ <Attr name="FieldOfView" cvar="cl_fov" value="80"/>
+ <Attr name="AudioMasterVolume" value="0.8"/>
+ <Attr name="AudioMusicVolume" value="0.6"/>
+ <Attr name="ShowHints" cvar="g_showHints" value="1"/>
+ <Attr name="ChromaticAberration" cvar="r_ChromaticAberration" value="1"/>
+ <Attr name="MouseSensitivity" value="1.0"/>
+ <Attr name="Language" cvar="g_language" value="english"/>
+</Attributes>

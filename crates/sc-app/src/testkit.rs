@@ -888,6 +888,26 @@ pub fn seed_game_data(ctx: &Context) {
     }
 }
 
+/// As [`seed_game_data`], for a test that brings its own default settings and strings. The
+/// controls and key names stay the shared fixture's.
+pub fn seed_game_data_with(ctx: &Context, attributes: &str, strings: &str) {
+    let sources = sc_core::defaults::Sources {
+        attributes: attributes.into(),
+        strings: strings.into(),
+        ..game_data_sources()
+    };
+    for channel in &ctx.channels {
+        if channel.build_id().is_none() {
+            continue;
+        }
+        let p4k = channel.dir.join("Data.p4k");
+        if sc_core::install::resolve_ci(&channel.dir, "Data.p4k").is_none() {
+            fs::write(&p4k, b"placeholder, not a real Data.p4k").unwrap();
+        }
+        sc_core::defaults::seed_cache(channel, &ctx.dirs.game_data(), &sources).unwrap();
+    }
+}
+
 // Shader caches ------------------------------------------------------------------
 
 pub fn shader_cache_dir(temp: &Path) -> PathBuf {
