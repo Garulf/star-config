@@ -9,10 +9,12 @@ use crate::error::{Error, Result};
 use flate2::read::DeflateDecoder;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 pub const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
+/// A real directory is a few hundred MiB; a claim far beyond that is damage, not data.
+pub const MAX_DIRECTORY_BYTES: u64 = 1024 * 1024 * 1024;
 
 const EOCD_SEARCH_BYTES: u64 = 1 << 20;
 const EOCD_SIG: &[u8] = b"PK\x05\x06";
@@ -50,6 +52,12 @@ pub struct Archive {
 
 impl Archive {
     pub fn open(path: &Path) -> Result<Archive> {
+        Self::open_only(path, |_| true)
+    }
+
+    /// Opens the archive keeping only the entries `wanted` accepts. `wanted` sees each name
+    /// as [`Archive::entry`] matches it: lower case, with forward slashes.
+    pub fn open_only(path: &Path, wanted: impl Fn(&str) -> bool) -> Result<Archive> {
         let mut file = File::open(path).map_err(|err| Error::io(path, err))?;
         let file_len = file.metadata().map_err(|err| Error::io(path, err))?.len();
         let bad = |message: &str| Error::Parse {
@@ -60,6 +68,12 @@ impl Archive {
         let io = |err| Error::io(path, err);
 
         let directory = find_directory(&mut file, file_len, io, bad)?;
+        if directory.size > MAX_DIRECTORY_BYTES {
+            return Err(Error::Invalid(format!(
+                "the archive's directory claims {} bytes, more than star-config reads",
+                directory.size
+            )));
+        }
         if directory
             .offset
             .checked_add(directory.size)
@@ -67,16 +81,12 @@ impl Archive {
         {
             return Err(bad("the central directory lies past the end of the file"));
         }
-        let mut raw = Vec::new();
         file.seek(SeekFrom::Start(directory.offset)).map_err(io)?;
-        file.by_ref()
-            .take(directory.size)
-            .read_to_end(&mut raw)
-            .map_err(io)?;
-        if raw.len() as u64 != directory.size {
-            return Err(bad("the central directory is truncated"));
-        }
-        let index = parse_directory(&raw).map_err(bad)?;
+        let reader = BufReader::new(file.by_ref().take(directory.size));
+        let index = parse_directory(reader, directory.size, wanted).map_err(|err| match err {
+            DirectoryError::Io(err) => Error::io(path, err),
+            DirectoryError::Bad(message) => bad(message),
+        })?;
         Ok(Archive {
             path: path.to_path_buf(),
             index,
@@ -225,46 +235,84 @@ fn find_directory(
     })
 }
 
-fn parse_directory(raw: &[u8]) -> std::result::Result<HashMap<String, Entry>, &'static str> {
-    let mut index = HashMap::new();
-    let mut at = 0;
-    while raw.len() - at >= CENTRAL_ENTRY_LEN && raw[at..].starts_with(b"PK") {
-        let fixed = &raw[at..at + CENTRAL_ENTRY_LEN];
-        let name_len = usize::from(u16_at(fixed, 28));
-        let extra_len = usize::from(u16_at(fixed, 30));
-        let comment_len = usize::from(u16_at(fixed, 32));
-        let name_end = at + CENTRAL_ENTRY_LEN + name_len;
-        let extra_end = name_end + extra_len;
-        if extra_end + comment_len > raw.len() {
-            return Err("a central directory entry runs past the end");
+enum DirectoryError {
+    Io(std::io::Error),
+    Bad(&'static str),
+}
+
+impl From<std::io::Error> for DirectoryError {
+    fn from(err: std::io::Error) -> Self {
+        if err.kind() == std::io::ErrorKind::UnexpectedEof {
+            Self::Bad("the central directory is truncated")
+        } else {
+            Self::Io(err)
         }
-        let name = String::from_utf8_lossy(&raw[at + CENTRAL_ENTRY_LEN..name_end]).into_owned();
-        let mut compressed = u64::from(u32_at(fixed, 20));
-        let mut size = u64::from(u32_at(fixed, 24));
-        let mut header_offset = u64::from(u32_at(fixed, 42));
+    }
+}
+
+/// Reads the directory one entry at a time, so only the kept entries are ever held.
+fn parse_directory(
+    mut reader: impl Read,
+    size: u64,
+    wanted: impl Fn(&str) -> bool,
+) -> std::result::Result<HashMap<String, Entry>, DirectoryError> {
+    let mut index = HashMap::new();
+    let mut remaining = size;
+    let mut fixed = [0u8; CENTRAL_ENTRY_LEN];
+    let mut variable = Vec::new();
+    let mut seen = false;
+    while remaining >= CENTRAL_ENTRY_LEN as u64 {
+        reader.read_exact(&mut fixed)?;
+        remaining -= CENTRAL_ENTRY_LEN as u64;
+        if !fixed.starts_with(b"PK") {
+            break;
+        }
+        let name_len = usize::from(u16_at(&fixed, 28));
+        let extra_len = usize::from(u16_at(&fixed, 30));
+        let comment_len = usize::from(u16_at(&fixed, 32));
+        let tail = name_len + extra_len + comment_len;
+        if tail as u64 > remaining {
+            return Err(DirectoryError::Bad(
+                "a central directory entry runs past the end",
+            ));
+        }
+        variable.resize(tail, 0);
+        reader.read_exact(&mut variable)?;
+        remaining -= tail as u64;
+        seen = true;
+        let name = String::from_utf8_lossy(&variable[..name_len]).into_owned();
+        let entry_key = key(&name);
+        if !wanted(&entry_key) {
+            continue;
+        }
+        let mut compressed = u64::from(u32_at(&fixed, 20));
+        let mut size = u64::from(u32_at(&fixed, 24));
+        let mut header_offset = u64::from(u32_at(&fixed, 42));
         apply_zip64_extra(
-            &raw[name_end..extra_end],
+            &variable[name_len..name_len + extra_len],
             &mut size,
             &mut compressed,
             &mut header_offset,
-        )?;
+        )
+        .map_err(DirectoryError::Bad)?;
         let info = EntryInfo {
             name,
-            method: u16_at(fixed, 10),
+            method: u16_at(&fixed, 10),
             compressed,
             size,
         };
         index.insert(
-            key(&info.name),
+            entry_key,
             Entry {
                 info,
                 header_offset,
             },
         );
-        at = extra_end + comment_len;
     }
-    if index.is_empty() && !raw.is_empty() {
-        return Err("the central directory holds no readable entries");
+    if !seen && size > 0 {
+        return Err(DirectoryError::Bad(
+            "the central directory holds no readable entries",
+        ));
     }
     Ok(index)
 }
@@ -579,6 +627,62 @@ mod tests {
         bytes[directory + 28..directory + 30].copy_from_slice(&u16::MAX.to_le_bytes());
         let (_dir, archive) = archive_of(&bytes);
         assert!(archive.is_err());
+    }
+
+    #[test]
+    fn open_only_keeps_just_the_wanted_entries() {
+        let bytes = build(&[
+            (
+                "Data\\Libs\\Config\\defaultProfile.xml",
+                Method::Store,
+                PROFILE,
+            ),
+            ("Data\\Objects\\ship.cgf", Method::Store, b"mesh"),
+            ("Data\\a.txt", Method::Store, b"hello"),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Data.p4k");
+        std::fs::write(&path, &bytes).unwrap();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let archive = Archive::open_only(&path, |name| {
+            seen.borrow_mut().push(name.to_string());
+            name.starts_with("data/libs/")
+        })
+        .unwrap();
+        assert_eq!(
+            seen.into_inner(),
+            [
+                "data/libs/config/defaultprofile.xml",
+                "data/objects/ship.cgf",
+                "data/a.txt"
+            ]
+        );
+        assert_eq!(archive.index.len(), 1);
+        assert_eq!(
+            archive.read("Data/Libs/Config/defaultProfile.xml").unwrap(),
+            PROFILE
+        );
+        assert!(archive.entry("data/a.txt").is_none());
+        assert!(matches!(
+            archive.read("data/objects/ship.cgf"),
+            Err(Error::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn an_oversized_directory_is_refused_before_it_is_read() {
+        let mut bytes = single(Method::Store);
+        let record = bytes
+            .windows(4)
+            .rposition(|window| window == b"PK\x06\x06")
+            .unwrap();
+        let claimed = MAX_DIRECTORY_BYTES + 1;
+        bytes[record + 40..record + 48].copy_from_slice(&claimed.to_le_bytes());
+        let (_dir, archive) = archive_of(&bytes);
+        match archive {
+            Err(Error::Invalid(message)) => assert!(message.contains("directory"), "{message}"),
+            other => panic!("expected an oversized directory to be refused, got {other:?}"),
+        }
     }
 
     #[test]

@@ -71,7 +71,7 @@ pub fn load(channel: &Channel, cache_root: &Path) -> Result<GameData, Unavailabl
         return Ok(data);
     }
 
-    let archive = Archive::open(&p4k).map_err(|err| archive_error(&err))?;
+    let archive = Archive::open_only(&p4k, is_read_entry).map_err(|err| archive_error(&err))?;
     let extracted = extract(&archive, &language)?;
     let used = Sources {
         strings: loose.unwrap_or_else(|| extracted.strings.clone()),
@@ -109,6 +109,17 @@ pub fn from_archive(
 ) -> Result<GameData, Unavailable> {
     let sources = extract(archive, language)?;
     GameData::from_sources(build.to_string(), &sources).map_err(|err| unreadable(&err))
+}
+
+/// The entries `load` reads, as `Archive::open_only` names them.
+fn is_read_entry(name: &str) -> bool {
+    [PROFILE, ATTRIBUTES, KEY_NAMES]
+        .iter()
+        .any(|entry| entry.eq_ignore_ascii_case(name))
+        || name
+            .strip_prefix("data/localization/")
+            .and_then(|rest| rest.strip_suffix("/global.ini"))
+            .is_some_and(|language| !language.is_empty() && !language.contains('/'))
 }
 
 fn extract(archive: &Archive, language: &str) -> Result<Sources, Unavailable> {
@@ -778,6 +789,44 @@ mod tests {
             Unavailable::NoArchive.message(),
             "This channel has no Data.p4k, so only your own binds are shown."
         );
+    }
+
+    #[test]
+    fn the_loader_keeps_only_the_entries_it_reads() {
+        for name in [
+            "data/libs/config/defaultprofile.xml",
+            "data/libs/config/profiles/default/attributes.xml",
+            "data/libs/config/keybinding_localization.xml",
+            "data/localization/english/global.ini",
+            "data/localization/german_(germany)/global.ini",
+        ] {
+            assert!(is_read_entry(name), "{name}");
+        }
+        for name in [
+            "data/objects/ship.cgf",
+            "data/libs/config/defaultprofile.xml.bak",
+            "data/localization/global.ini",
+            "data/localization/english/sub/global.ini",
+            "data/localization/english/other.ini",
+        ] {
+            assert!(!is_read_entry(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn an_archive_with_other_entries_still_loads() {
+        let install = Install::new();
+        let mut entries = standard();
+        entries.insert(
+            0,
+            (
+                "Data\\Objects\\ship.cgf".into(),
+                Method::Store,
+                b"mesh".to_vec(),
+            ),
+        );
+        install.write_archive(&entries);
+        assert_eq!(install.load().unwrap().maps.len(), 3);
     }
 
     #[test]
