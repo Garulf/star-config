@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/sc-core", "crates/sc-app"]
+members = ["crates/sc-core", "crates/sc-app", "crates/sc-input"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ license = "MIT"
 
 [workspace.dependencies]
 sc-core = { path = "crates/sc-core" }
+sc-input = { path = "crates/sc-input" }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
