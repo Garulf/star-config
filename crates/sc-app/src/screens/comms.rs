@@ -142,7 +142,7 @@ fn row_of(entry: &'static Entry, game: Option<&GameData>) -> Row {
         return Row {
             entry,
             label: fallback.to_string(),
-            default: None,
+            default: entry.default.clone(),
             choices: Vec::new(),
         };
     };
@@ -156,7 +156,10 @@ fn row_of(entry: &'static Entry, game: Option<&GameData>) -> Row {
     Row {
         entry,
         label: game.label(entry.label_key.as_deref(), fallback),
-        default: game.setting(&entry.name).map(|s| s.default.clone()),
+        default: game
+            .setting(&entry.name)
+            .map(|s| s.default.clone())
+            .or_else(|| entry.default.clone()),
         choices,
     }
 }
@@ -580,12 +583,12 @@ mod tests {
         );
         let count: usize = groups.iter().map(|g| g.rows.len()).sum();
         assert_eq!(count, 18);
-        assert!(
-            groups
-                .iter()
-                .flat_map(|g| &g.rows)
-                .all(|r| r.default.is_none())
-        );
+        let walking = groups
+            .iter()
+            .flat_map(|g| &g.rows)
+            .find(|r| r.entry.name == "HeadtrackingDisableDuringWalking")
+            .unwrap();
+        assert_eq!(walking.default.as_deref(), Some("1"));
     }
 
     #[test]

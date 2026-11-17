@@ -33,6 +33,8 @@ pub struct Entry {
     pub fallback: Option<String>,
     pub kind: Kind,
     pub note: Option<String>,
+    /// Our own record of the game's default, for screens that run without game data.
+    pub default: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +99,7 @@ struct RawEntry {
     step: Option<f64>,
     choices: Option<Vec<(String, String)>>,
     note: Option<String>,
+    default: Option<String>,
 }
 
 pub fn layout() -> &'static Layout {
@@ -191,6 +194,7 @@ impl Entry {
             step,
             choices,
             note,
+            default,
         } = raw;
         if label_key.is_none() && fallback.is_none() {
             return Err(format!(
@@ -221,6 +225,7 @@ impl Entry {
             fallback,
             kind,
             note,
+            default,
         })
     }
 }
@@ -417,6 +422,34 @@ fallback = "A"
     }
 
     /// The 18 settings the old `attrs.toml` described, as they stood when it was retired.
+    #[test]
+    fn former_defaults_are_kept() {
+        let defaults = [
+            ("HeadtrackingSource", "0"),
+            ("HeadtrackingToggle", "0"),
+            ("HeadtrackingToggleAutoCalibrate", "1"),
+            ("HeadtrackingGlobalSmoothingPosition", "0.0"),
+            ("HeadtrackingGlobalSmoothingRotation", "0.0"),
+            ("HeadtrackingInactivityTime", "2.0"),
+            ("HeadtrackingEnableSeatPositionOffset", "1"),
+            ("HeadtrackingEnableRollSeat", "1"),
+            ("HeadtrackingEnableRollFPS", "0"),
+            ("HeadtrackingHoldUseRawDuringHold", "0"),
+            ("HeadtrackingDisableDuringSeat", "0"),
+            ("HeadtrackingDisableDuringWalking", "1"),
+            ("HeadtrackingDisableDuringADS", "1"),
+            ("HeadtrackingDisableDuringVehicleAds", "1"),
+            ("HeadtrackingDisableDuringMobiGlas", "1"),
+            ("HeadtrackingDisableDuringIM", "0"),
+            ("HeadtrackingThirdPersonCameraToggle", "0"),
+            ("HeadtrackingThirdPersonDisableDuringInventory", "1"),
+        ];
+        for (name, default) in defaults {
+            let found = entry(name).and_then(|entry| entry.default.as_deref());
+            assert_eq!(found, Some(default), "{name}");
+        }
+    }
+
     fn former_catalogue() -> Vec<Former> {
         vec![
             Former {

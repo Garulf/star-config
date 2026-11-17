@@ -24,24 +24,28 @@ name = "HeadtrackingSource"
 label_key = "pause_OptionsHeadtrackingSource"
 fallback = "Source"
 kind = "number"
+default = "0"
 note = "Which number means which device is not confirmed. Check the in-game menu."
 
 [[tab.section.entry]]
 name = "HeadtrackingToggle"
 fallback = "Enabled"
 kind = "toggle"
+default = "0"
 
 [[tab.section.entry]]
 name = "HeadtrackingToggleAutoCalibrate"
 label_key = "pause_OptionsHeadtrackingToggleAutoCalibrate"
 fallback = "Recalibrate when enabled"
 kind = "toggle"
+default = "1"
 
 [[tab.section.entry]]
 name = "HeadtrackingGlobalSmoothingPosition"
 label_key = "pause_options_headtracking_global_smoothing_position"
 fallback = "Position smoothing"
 kind = "slider"
+default = "0.0"
 min = 0.0
 max = 1.0
 step = 0.01
@@ -52,6 +56,7 @@ name = "HeadtrackingGlobalSmoothingRotation"
 label_key = "pause_options_headtracking_global_smoothing_rotation"
 fallback = "Rotation smoothing"
 kind = "slider"
+default = "0.0"
 min = 0.0
 max = 1.0
 step = 0.01
@@ -62,6 +67,7 @@ name = "HeadtrackingInactivityTime"
 label_key = "pause_OptionsHeadTrackingInactivityTime"
 fallback = "Inactivity time"
 kind = "slider"
+default = "2.0"
 min = 0.0
 max = 30.0
 step = 0.5
@@ -71,24 +77,28 @@ note = "Range is a guess. Type a value to go outside it."
 name = "HeadtrackingEnableSeatPositionOffset"
 fallback = "Seat position offset"
 kind = "toggle"
+default = "1"
 
 [[tab.section.entry]]
 name = "HeadtrackingEnableRollSeat"
 label_key = "pause_OptionsHeadtrackingEnableRollSeat"
 fallback = "Roll while seated"
 kind = "toggle"
+default = "1"
 
 [[tab.section.entry]]
 name = "HeadtrackingEnableRollFPS"
 label_key = "pause_OptionsHeadtrackingEnableRollFPS"
 fallback = "Roll on foot"
 kind = "toggle"
+default = "0"
 
 [[tab.section.entry]]
 name = "HeadtrackingHoldUseRawDuringHold"
 label_key = "pause_OptionsHeadTrackingHoldUseRawDuringHold"
 fallback = "Raw values while held"
 kind = "toggle"
+default = "0"
 
 [[tab.section]]
 fallback = "Head tracking: when it is off"
@@ -97,31 +107,37 @@ fallback = "Head tracking: when it is off"
 name = "HeadtrackingDisableDuringSeat"
 fallback = "Off while seated"
 kind = "toggle"
+default = "0"
 
 [[tab.section.entry]]
 name = "HeadtrackingDisableDuringWalking"
 fallback = "Off on foot"
 kind = "toggle"
+default = "1"
 
 [[tab.section.entry]]
 name = "HeadtrackingDisableDuringADS"
 fallback = "Off while aiming"
 kind = "toggle"
+default = "1"
 
 [[tab.section.entry]]
 name = "HeadtrackingDisableDuringVehicleAds"
 fallback = "Off while aiming in a vehicle"
 kind = "toggle"
+default = "1"
 
 [[tab.section.entry]]
 name = "HeadtrackingDisableDuringMobiGlas"
 fallback = "Off in mobiGlas"
 kind = "toggle"
+default = "1"
 
 [[tab.section.entry]]
 name = "HeadtrackingDisableDuringIM"
 fallback = "Off in interaction mode"
 kind = "toggle"
+default = "0"
 
 [[tab.section]]
 fallback = "Head tracking: third person"
@@ -130,9 +146,11 @@ fallback = "Head tracking: third person"
 name = "HeadtrackingThirdPersonCameraToggle"
 fallback = "Third person camera"
 kind = "toggle"
+default = "0"
 
 [[tab.section.entry]]
 name = "HeadtrackingThirdPersonDisableDuringInventory"
 label_key = "pause_OptionsHeadtrackingThirdPersonDisableDuringInventory"
 fallback = "Off in inventory"
 kind = "toggle"
+default = "1"

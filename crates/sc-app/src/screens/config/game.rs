@@ -584,6 +584,7 @@ mod tests {
                 ("french".into(), "missing_key".into()),
             ]),
             note: None,
+            default: None,
         };
         let row = placed_row(&game, &entry).unwrap();
         assert_eq!(
