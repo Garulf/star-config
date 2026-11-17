@@ -17,7 +17,7 @@
   </optiongroup>
  </optiontree>
  <optiontree type="gamepad" name="root" UIShowInvert="1" UIShowSensitivity="1" UISensitivityMin="0.01" UISensitivityMax="2.0">
-  <optiongroup name="master" UILabel="@ui_KbOptMaster" UIShowSensitivity="1" UIShowCurve="0" UIShowInvert="0">
+  <optiongroup name="master" UILabel="@ui_KbOptMaster" UIShowSensitivity="0" UIShowCurve="0" UIShowInvert="0">
    <optiongroup name="fps_view" UILabel="@ui_KbOptFootLook" exponent="1.5" UIShowCurve="1" UIShowInvert="-1">
     <nonlinearity_curve>
      <point in="0.2" out="0.05"/>

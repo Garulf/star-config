@@ -21,6 +21,7 @@
    <flight_move_pitch invert="1"/>
   </options>
   <options type="gamepad" instance="1" Product="Controller (Gamepad)">
+   <master sensitivity="1.1"/>
    <flight_view exponent="1"/>
   </options>
   <options type="joystick" instance="1" Product="VKB Gladiator NXT L  {0200231D-0000-0000-0000-504944564944}">
