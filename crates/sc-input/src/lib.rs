@@ -4,6 +4,10 @@ mod evdev_map;
 mod linux;
 mod listener;
 mod session;
+#[cfg(windows)]
+mod windows;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod xinput_map;
 
 pub use listener::Listener;
 pub use session::Session;
@@ -83,7 +87,15 @@ pub fn open(class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
     Session::new(Box::new(linux::open(class)))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
+pub fn open(class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
+    match class {
+        DeviceClass::Gamepad => Session::new(Box::new(windows::XInputBackend::open())),
+        DeviceClass::Stick => Session::new(Box::new(NoDevices)),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
 pub fn open(_class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
     Session::new(Box::new(NoDevices))
 }
