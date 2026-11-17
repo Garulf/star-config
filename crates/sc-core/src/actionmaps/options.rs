@@ -1062,10 +1062,17 @@ mod tests {
                 "0",
             )],
         );
-        assert!(mouse.contains("<options type=\"mouse\" instance=\"1\">"));
+        assert!(!mouse.contains("type=\"mouse\""));
         assert_eq!(
-            setting(group_options(&parse(&mouse), Mouse, 1), "mouse_view_yaw").invert,
+            setting(group_options(&parse(&mouse), Keyboard, 1), "mouse_view_yaw").invert,
             Some(false)
+        );
+        assert_eq!(
+            after(
+                &mouse,
+                &[reset_group(Mouse, 1, "mouse_view_yaw", GroupField::Invert)]
+            ),
+            original
         );
         let reset = after(
             &edited,

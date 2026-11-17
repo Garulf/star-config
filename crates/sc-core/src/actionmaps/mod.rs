@@ -101,6 +101,8 @@ pub enum Op {
         b: u32,
     },
     /// Sets one field of an option group, creating the `options` slot and the group element as needed.
+    /// The game keeps mouse groups in its keyboard slot, so `kind: Mouse` edits `type="keyboard"`,
+    /// as do the other group and curve ops.
     SetGroup {
         kind: DeviceKind,
         instance: u32,
@@ -272,10 +274,7 @@ impl ActionMaps {
             } => options::set_group(
                 path,
                 &mut text,
-                Slot {
-                    kind: *kind,
-                    instance: *instance,
-                },
+                option_slot(*kind, *instance),
                 group,
                 *field,
                 value,
@@ -288,10 +287,7 @@ impl ActionMaps {
             } => options::reset_group(
                 path,
                 &mut text,
-                Slot {
-                    kind: *kind,
-                    instance: *instance,
-                },
+                option_slot(*kind, *instance),
                 group,
                 *field,
             )?,
@@ -303,10 +299,7 @@ impl ActionMaps {
             } => options::set_curve(
                 path,
                 &mut text,
-                Slot {
-                    kind: *kind,
-                    instance: *instance,
-                },
+                option_slot(*kind, *instance),
                 group,
                 points,
             )?,
@@ -314,15 +307,7 @@ impl ActionMaps {
                 kind,
                 instance,
                 group,
-            } => options::reset_curve(
-                path,
-                &mut text,
-                Slot {
-                    kind: *kind,
-                    instance: *instance,
-                },
-                group,
-            )?,
+            } => options::reset_curve(path, &mut text, option_slot(*kind, *instance), group)?,
             Op::SetAxis {
                 product,
                 input,
@@ -372,6 +357,14 @@ impl Document for ActionMaps {
         *self = Self::from_text(self.path.clone(), self.bom, text)?;
         Ok(())
     }
+}
+
+fn option_slot(kind: DeviceKind, instance: u32) -> Slot {
+    let kind = match kind {
+        DeviceKind::Mouse => DeviceKind::Keyboard,
+        other => other,
+    };
+    Slot { kind, instance }
 }
 
 pub fn parse_input(input: &str) -> Option<(Slot, &str)> {
