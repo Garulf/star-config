@@ -1,8 +1,8 @@
 //! Sticks and gamepads: which `jsN` a press belongs to, and the stream that reads them.
 
 use super::Message;
-use iced::futures::Stream;
 use iced::futures::channel::mpsc::Sender;
+use iced::futures::{SinkExt, Stream};
 use sc_core::actionmaps::UsbId;
 use sc_input::{DeviceClass, DeviceInfo};
 use std::time::Duration;
@@ -57,19 +57,34 @@ pub struct DeviceSession {
 
 /// Reads sticks or gamepads until the subscription is dropped.
 pub fn device_stream(session: &DeviceSession) -> impl Stream<Item = Message> + use<> {
-    let class = session.class;
+    let session = *session;
     iced::stream::channel(1, async move |sender: Sender<Message>| {
-        let _ = std::thread::Builder::new()
+        let mut fallback = sender.clone();
+        let spawned = std::thread::Builder::new()
             .name("device-listener".into())
-            .spawn(move || listen(class, sender));
+            .spawn(move || listen(session, sender));
+        if spawned.is_err() {
+            let _ = fallback.send(nothing_found(session.generation)).await;
+        }
     })
+}
+
+/// What the panel hears when no reader could start, so it offers the picks.
+fn nothing_found(generation: u64) -> Message {
+    Message::Devices {
+        generation,
+        found: Vec::new(),
+        unreadable: 0,
+    }
 }
 
 /// The Windows backends need opening, every read and closing on one thread, so the session
 /// never leaves this one.
-fn listen(class: DeviceClass, mut sender: Sender<Message>) {
-    let mut session = sc_input::open(class);
+fn listen(listen: DeviceSession, mut sender: Sender<Message>) {
+    let generation = listen.generation;
+    let mut session = sc_input::open(listen.class);
     let found = Message::Devices {
+        generation,
         found: session.devices().to_vec(),
         unreadable: session.unreadable(),
     };
@@ -78,7 +93,7 @@ fn listen(class: DeviceClass, mut sender: Sender<Message>) {
     }
     while !sender.is_closed() {
         if let Some(heard) = session.poll()
-            && !deliver(&mut sender, Message::Heard(heard))
+            && !deliver(&mut sender, Message::Heard { generation, heard })
         {
             return;
         }

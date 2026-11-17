@@ -227,11 +227,16 @@ pub enum Message {
     ClosePanel,
     Input(iced::Event),
     /// The sticks or gamepads a listening cell reads, sent once when reading starts.
+    /// `generation` names the listen the reader belongs to; others are ignored.
     Devices {
+        generation: u64,
         found: Vec<DeviceInfo>,
         unreadable: usize,
     },
-    Heard(Heard),
+    Heard {
+        generation: u64,
+        heard: Heard,
+    },
     CaptureHover(bool),
     Listen,
     TogglePicks,
@@ -389,6 +394,12 @@ impl State {
         })
     }
 
+    /// True when a device message comes from the reader of the listen going on now.
+    fn is_current(&self, generation: u64) -> bool {
+        self.device_session()
+            .is_some_and(|session| session.generation == generation)
+    }
+
     fn listening_edit(&self) -> Option<&Edit> {
         match &self.panel {
             Panel::Edit(edit) if edit.listening && self.writable() => Some(edit),
@@ -487,8 +498,12 @@ impl State {
                 Action::none()
             }
             Message::Input(event) => self.input(&event),
-            Message::Devices { found, unreadable } => {
-                if self.listens_to().is_some()
+            Message::Devices {
+                generation,
+                found,
+                unreadable,
+            } => {
+                if self.is_current(generation)
                     && let Panel::Edit(edit) = &mut self.panel
                 {
                     edit.picks_open |= found.is_empty();
@@ -496,7 +511,13 @@ impl State {
                 }
                 Action::none()
             }
-            Message::Heard(heard) => self.heard(heard),
+            Message::Heard { generation, heard } => {
+                if self.is_current(generation) {
+                    self.heard(heard)
+                } else {
+                    Action::none()
+                }
+            }
             Message::Listen => {
                 if let Panel::Edit(edit) = &mut self.panel {
                     edit.listen();
@@ -738,14 +759,7 @@ impl State {
                 kind: cell.kind,
                 instance: 1,
             });
-        let reading = match &self.panel {
-            Panel::Edit(old) if old.listening && old.cell.kind == cell.kind => old.devices.clone(),
-            _ => None,
-        };
-        let mut edit = Edit::new(cell, slot, typed);
-        edit.picks_open = reading.as_ref().is_some_and(|(found, _)| found.is_empty());
-        edit.devices = reading;
-        self.panel = Panel::Edit(edit);
+        self.panel = Panel::Edit(Edit::new(cell, slot, typed));
         self.listen_generation = self.listen_generation.wrapping_add(1);
     }
 

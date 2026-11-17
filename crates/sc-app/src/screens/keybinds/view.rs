@@ -59,9 +59,14 @@ const CHIP_PADDING: Padding = Padding {
 const NO_MATCH: &str = "No binds match. Clear the search or pick another action map.";
 const PICK_A_CELL: &str = "Choose a cell to change its bind.";
 const UNBOUND: &str = "Unbound";
-const COMBINATION: &str = "Hold Alt, Ctrl or Shift for a combination. Escape stops listening.";
-const STICK_MOVES: &str = "Or move an axis or push a hat. Esc stops.";
-const PAD_MOVES: &str = "Or move a stick or pull a trigger. Esc stops.";
+const COMBINATION: &str = "Hold Alt, Ctrl or Shift for a combination. Esc stops listening.";
+const STICK_MOVES: &str = "Or move an axis or push a hat. Esc stops listening.";
+const PAD_MOVES: &str = "Or move a stick or pull a trigger. Esc stops listening.";
+/// Why a device that is plugged in cannot be read, as far as each platform can say.
+#[cfg(target_os = "linux")]
+const UNREADABLE_WHY: &str = "Check that your user can read /dev/input.";
+#[cfg(not(target_os = "linux"))]
+const UNREADABLE_WHY: &str = "Another program may be holding it.";
 
 fn action_width() -> Length {
     Length::FillPortion(binds::ACTION_PORTION)
@@ -939,9 +944,7 @@ fn reading(kind: DeviceKind, (found, unreadable): &(Vec<DeviceInfo>, usize)) -> 
     }
     if *unreadable > 0 {
         return (
-            format!(
-                "Found {unreadable} that this app cannot read. Check that your user can read /dev/input."
-            ),
+            format!("Found {unreadable} that this app cannot read. {UNREADABLE_WHY}"),
             false,
         );
     }
@@ -977,9 +980,9 @@ fn listen_again_after<'a>(line: impl text::IntoFragment<'a>) -> Element<'a, Mess
 /// The modifiers held so far as key caps, each followed by a plus, then what comes next.
 fn held_caps<'a>(kind: DeviceKind, held: &[&'static str]) -> Element<'a, Message> {
     let next = if kind == DeviceKind::Mouse {
-        "then a mouse button. Esc stops."
+        "then a mouse button. Esc stops listening."
     } else {
-        "then a key. Esc stops."
+        "then a key. Esc stops listening."
     };
     let mut caps = Row::new().spacing(space::XS).align_y(Alignment::Center);
     for &name in held {

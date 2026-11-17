@@ -1840,13 +1840,22 @@ fn vkb_r() -> DeviceInfo {
     }
 }
 
+/// The listen the screen is on now, as the device reader for it would say.
+fn generation(app: &App) -> u64 {
+    app.device_session().map_or(0, |session| session.generation)
+}
+
 fn heard(app: &mut App, device: DeviceInfo, input: &str) {
+    let generation = generation(app);
     send(
         app,
-        keybinds::Message::Heard(Heard {
-            device,
-            input: input.into(),
-        }),
+        keybinds::Message::Heard {
+            generation,
+            heard: Heard {
+                device,
+                input: input.into(),
+            },
+        },
     );
 }
 
@@ -1913,13 +1922,7 @@ fn a_press_lands_on_the_stick_the_file_names() {
         "v_pitch",
         DeviceKind::Joystick,
     );
-    send(
-        &mut app,
-        keybinds::Message::Devices {
-            found: vec![vkb_r()],
-            unreadable: 0,
-        },
-    );
+    devices(&mut app, vec![vkb_r()], 0);
     assert_eq!(pending(&app), 0);
     heard(&mut app, vkb_r(), "button7");
     assert_eq!(pending(&app), 1);
@@ -2139,7 +2142,15 @@ fn vkb_l() -> DeviceInfo {
 }
 
 fn devices(app: &mut App, found: Vec<DeviceInfo>, unreadable: usize) {
-    send(app, keybinds::Message::Devices { found, unreadable });
+    let generation = generation(app);
+    send(
+        app,
+        keybinds::Message::Devices {
+            generation,
+            found,
+            unreadable,
+        },
+    );
 }
 
 fn hold_left_alt(app: &mut App) {
@@ -2165,8 +2176,13 @@ fn keyboard_box_shows_held_modifiers() {
         DeviceKind::Keyboard,
     );
     assert!(!has(&app, "L Alt"));
+    assert!(has_containing(
+        &app,
+        "Hold Alt, Ctrl or Shift for a combination. Esc stops listening."
+    ));
     hold_left_alt(&mut app);
     assert!(has(&app, "L Alt"));
+    assert!(has(&app, "then a key. Esc stops listening."));
     assert!(has(&app, KEY_PROMPT));
     assert!(app.wants_input());
     assert_eq!(pending(&app), 0);
@@ -2189,7 +2205,7 @@ fn stick_box_names_the_devices_it_hears() {
     ));
     assert!(has_containing(
         &app,
-        "Or move an axis or push a hat. Esc stops."
+        "Or move an axis or push a hat. Esc stops listening."
     ));
 }
 
@@ -2235,7 +2251,7 @@ fn no_gamepads_say_so() {
     );
     assert!(has_containing(
         &app,
-        "Or move a stick or pull a trigger. Esc stops."
+        "Or move a stick or pull a trigger. Esc stops listening."
     ));
     devices(&mut app, Vec::new(), 0);
     assert!(has_containing(
@@ -2255,9 +2271,88 @@ fn unreadable_sticks_are_named_as_such() {
         DeviceKind::Joystick,
     );
     devices(&mut app, Vec::new(), 2);
-    assert!(has_containing(&app, "Found 2 that this app cannot read"));
-    assert!(has_containing(&app, "/dev/input"));
+    assert!(has_containing(&app, "Found 2 that this app cannot read."));
+    #[cfg(target_os = "linux")]
+    assert!(has_containing(
+        &app,
+        "Found 2 that this app cannot read. Check that your user can read /dev/input."
+    ));
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert!(has_containing(
+            &app,
+            "Found 2 that this app cannot read. Another program may be holding it."
+        ));
+        assert!(!has_containing(&app, "/dev/input"));
+    }
     assert!(!has_containing(&app, "No sticks found"));
+}
+
+#[test]
+fn a_message_from_an_earlier_listen_is_ignored() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    let earlier = generation(&app);
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Joystick,
+    );
+    send(
+        &mut app,
+        keybinds::Message::Devices {
+            generation: earlier,
+            found: Vec::new(),
+            unreadable: 0,
+        },
+    );
+    assert!(!has_containing(&app, "No sticks found"));
+    send(
+        &mut app,
+        keybinds::Message::Heard {
+            generation: earlier,
+            heard: Heard {
+                device: vkb_r(),
+                input: "button7".into(),
+            },
+        },
+    );
+    assert_eq!(pending(&app), 0);
+    assert_eq!(app.listens_to(), Some(DeviceClass::Stick));
+
+    heard(&mut app, vkb_r(), "button7");
+    assert_eq!(pending(&app), 1);
+}
+
+#[test]
+fn a_new_cell_does_not_keep_the_old_device_list() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, Vec::new(), 0);
+    assert!(has(&app, "32"));
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Joystick,
+    );
+    assert!(!has_containing(&app, "No sticks found"));
+    devices(&mut app, vec![vkb_l()], 0);
+    assert!(!has(&app, "32"));
+    assert!(has_containing(&app, "Listening to: VKB Gladiator NXT L"));
 }
 
 #[test]

@@ -79,11 +79,16 @@ fn stage(app: &mut App, screen: Screen, temp: &Path) {
                     Message::Keybinds(keybinds::Message::Typed("mouse5".into())),
                     Message::Keybinds(keybinds::Message::Set),
                     cell("v_weapon_launch_missile", DeviceKind::Joystick),
-                    Message::Keybinds(keybinds::Message::Devices {
-                        found: vec![vkb("L", 0x0200), vkb("R", 0x0201)],
-                        unreadable: 0,
-                    }),
                 ],
+            );
+            let generation = app.device_session().expect("listening").generation;
+            feed(
+                app,
+                [Message::Keybinds(keybinds::Message::Devices {
+                    generation,
+                    found: vec![vkb("L", 0x0200), vkb("R", 0x0201)],
+                    unreadable: 0,
+                })],
             );
         }
         Screen::Comms => feed(
