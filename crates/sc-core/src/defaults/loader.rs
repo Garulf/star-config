@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const PROFILE: &str = "Data/Libs/Config/defaultProfile.xml";
 pub const ATTRIBUTES: &str = "Data/Libs/Config/Profiles/default/attributes.xml";
@@ -21,6 +22,7 @@ const ENGLISH: &str = "english";
 const STAMP_FILE: &str = "stamp.json";
 const PARTIAL_SUFFIX: &str = ".partial";
 const KEEP_BUILDS: usize = 2;
+const STALE_PARTIAL: Duration = Duration::from_secs(10 * 60);
 
 pub fn strings_entry(language: &str) -> String {
     format!("Data/Localization/{language}/global.ini")
@@ -215,10 +217,20 @@ fn build_dir(cache_root: &Path, channel: &Channel, build: &str) -> PathBuf {
     channel_cache(cache_root, channel).join(sanitised(build))
 }
 
+/// Unique per store, so two loaders of one channel never write into the same folder.
 fn partial_dir(dir: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let mut name = dir.file_name().unwrap_or_default().to_os_string();
-    name.push(PARTIAL_SUFFIX);
+    name.push(format!(
+        "{PARTIAL_SUFFIX}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
     dir.with_file_name(name)
+}
+
+fn is_partial(name: &str) -> bool {
+    name.contains(PARTIAL_SUFFIX)
 }
 
 fn file_name(entry: &str) -> &str {
@@ -248,16 +260,21 @@ fn read_cache(dir: &Path, stamp: &Stamp, language: &str, loose: Option<&str>) ->
 
 /// The data is already good by now, so a cache that cannot be written costs only speed.
 fn store_and_prune(dir: &Path, stamp: &Stamp, language: &str, sources: &Sources) {
-    if store(dir, stamp, language, sources).is_err() {
-        let _ = fs::remove_dir_all(partial_dir(dir));
+    let partial = partial_dir(dir);
+    if store(&partial, dir, stamp, language, sources).is_err() {
+        let _ = fs::remove_dir_all(&partial);
         return;
     }
     prune(dir);
 }
 
-fn store(dir: &Path, stamp: &Stamp, language: &str, sources: &Sources) -> crate::error::Result<()> {
-    let partial = partial_dir(dir);
-    remove_dir(&partial)?;
+fn store(
+    partial: &Path,
+    dir: &Path,
+    stamp: &Stamp,
+    language: &str,
+    sources: &Sources,
+) -> crate::error::Result<()> {
     let files = [
         (file_name(PROFILE).to_string(), &sources.profile),
         (file_name(ATTRIBUTES).to_string(), &sources.attributes),
@@ -271,7 +288,7 @@ fn store(dir: &Path, stamp: &Stamp, language: &str, sources: &Sources) -> crate:
         serde_json::to_vec_pretty(stamp).map_err(|err| Error::Invalid(err.to_string()))?;
     write_atomic(&partial.join(STAMP_FILE), &stamp_json)?;
     remove_dir(dir)?;
-    fs::rename(&partial, dir).map_err(|err| Error::io(dir, err))
+    fs::rename(partial, dir).map_err(|err| Error::io(dir, err))
 }
 
 fn remove_dir(dir: &Path) -> crate::error::Result<()> {
@@ -281,7 +298,8 @@ fn remove_dir(dir: &Path) -> crate::error::Result<()> {
     }
 }
 
-/// Keeps `current` and the newest other build; clears leftovers of crashed runs.
+/// Keeps `current` and the newest other build; clears leftovers of crashed runs once they are
+/// too old to belong to a load still running.
 fn prune(current: &Path) {
     let Some(parent) = current.parent() else {
         return;
@@ -295,15 +313,16 @@ fn prune(current: &Path) {
         if !entry.file_type().is_ok_and(|kind| kind.is_dir()) || path == current {
             continue;
         }
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .ends_with(PARTIAL_SUFFIX)
-        {
-            let _ = fs::remove_dir_all(&path);
+        let modified = entry.metadata().and_then(|meta| meta.modified());
+        if is_partial(&entry.file_name().to_string_lossy()) {
+            let age = modified
+                .ok()
+                .and_then(|when| SystemTime::now().duration_since(when).ok());
+            if age.is_some_and(|age| age > STALE_PARTIAL) {
+                let _ = fs::remove_dir_all(&path);
+            }
             continue;
         }
-        let modified = entry.metadata().and_then(|meta| meta.modified());
         older.push((modified.unwrap_or(UNIX_EPOCH), path));
     }
     older.sort();
@@ -526,12 +545,49 @@ mod tests {
         let data = install.load().unwrap();
         assert_eq!(data.maps.len(), 3);
         assert!(dir.join(STAMP_FILE).is_file());
-        assert!(!partial.exists());
         assert!(!dir.join("leftover.xml").exists());
+        assert!(
+            partial.exists(),
+            "a fresh partial may belong to a load still running"
+        );
         assert_ne!(
             fs::read_to_string(dir.join("defaultProfile.xml")).unwrap(),
             "<profile>"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_partials_are_cleared() {
+        let install = Install::new();
+        let partial = partial_dir(&install.dir_for("100"));
+        fs::create_dir_all(&partial).unwrap();
+        fs::File::open(&partial)
+            .unwrap()
+            .set_modified(SystemTime::now() - STALE_PARTIAL * 2)
+            .unwrap();
+        install.load().unwrap();
+        assert!(!partial.exists());
+    }
+
+    #[test]
+    fn concurrent_loads_leave_one_whole_cache() {
+        let install = Install::new();
+        std::thread::scope(|scope| {
+            let loads: Vec<_> = (0..4).map(|_| scope.spawn(|| install.load())).collect();
+            for load in loads {
+                assert_eq!(load.join().unwrap().unwrap().maps.len(), 3);
+            }
+        });
+        let dir = install.dir_for("100");
+        assert!(dir.join(STAMP_FILE).is_file());
+        assert_eq!(install.load().unwrap().settings.len(), 8);
+        let leftovers: Vec<_> = fs::read_dir(dir.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|entry| is_partial(&entry.file_name().to_string_lossy()))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[test]
@@ -700,6 +756,7 @@ mod tests {
         assert_eq!(counts.settings, 345);
         assert_eq!(counts.option_trees, 3);
         assert_eq!(counts.groups, 131);
+        assert!(counts.label_keys > 0);
         assert!(
             counts.labels_found * 100 >= counts.label_keys * 98,
             "{} of {} action labels resolve",
