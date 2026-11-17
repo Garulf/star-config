@@ -39,6 +39,10 @@
  <actionmap name="seat_general" version="1" UILabel="@ui_CgSeatGeneral" UICategory="@ui_CcGeneral">
   <action name="v_eject" activationMode="press" keyboard="ralt+y" joystick=" " UILabel="@ui_CiEject" UIDescription="@ui_CiEjectDesc"/>
   <action name="v_look_behind" activationMode="delayed_hold" keyboard="comma" gamepad="shoulderl+a" UILabel="@ui_CiLookBehind"/>
+  <action name="v_hold_breath" UILabel="@ui_CiHoldBreath">
+   <gamepad activationMode="hold" input="triggerl_btn"/>
+   <keyboard activationMode="double_tap" input=" "/>
+  </action>
  </actionmap>
  <actionmap name="spaceship_movement" version="2" UILabel="@ui_CgSpaceFlightMovement" UICategory="@ui_CcFlight">
   <action name="v_pitch_up" activationMode="press" keyboard="down" joystick=" " optionGroup="flight_move_pitch" UILabel="@ui_CiPitchUp" UIDescription="@ui_CiPitchUpDesc"/>

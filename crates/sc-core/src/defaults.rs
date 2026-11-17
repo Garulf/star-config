@@ -3,7 +3,7 @@
 use crate::actionmaps::DeviceKind;
 use crate::error::{Error, Result};
 use crate::localization::Strings;
-use crate::xml_edit::{self, Element, line_at};
+use crate::xml_edit::{self, Element};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
@@ -133,7 +133,8 @@ impl GameData {
 
     pub fn label(&self, key: Option<&str>, fallback: &str) -> String {
         key.and_then(|key| self.strings.get(key))
-            .filter(|text| !text.trim().is_empty())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
             .map_or_else(|| humanise(fallback), str::to_string)
     }
 
@@ -163,7 +164,8 @@ impl GameData {
         });
         named
             .and_then(|label_key| self.strings.get(label_key))
-            .filter(|text| !text.trim().is_empty())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
             .map_or_else(|| key.to_string(), str::to_string)
     }
 }
@@ -222,24 +224,14 @@ fn label_key(element: &Element, name: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-fn number<T: std::str::FromStr>(
-    path: &Path,
-    text: &str,
-    element: &Element,
-    name: &str,
-) -> Result<Option<T>> {
-    let Some(raw) = attr(element, name) else {
-        return Ok(None);
-    };
-    raw.trim().parse().map(Some).map_err(|_| Error::Parse {
-        path: path.to_path_buf(),
-        line: line_at(text, element.open_tag.start),
-        message: format!("{name}=\"{raw}\" is not a number"),
-    })
+/// A value a later build writes in a form this one does not know is skipped, so one odd
+/// number never costs the whole build's defaults.
+fn number<T: std::str::FromStr>(element: &Element, name: &str) -> Option<T> {
+    attr(element, name)?.trim().parse().ok()
 }
 
-fn flag(path: &Path, text: &str, element: &Element, name: &str) -> Result<i8> {
-    Ok(number(path, text, element, name)?.unwrap_or(0))
+fn flag(element: &Element, name: &str) -> i8 {
+    number(element, name).unwrap_or(0)
 }
 
 fn scan_root(path: &str, text: &str, root: &str) -> Result<(std::path::PathBuf, Vec<Element>)> {
@@ -305,9 +297,8 @@ fn parse_input_names(text: &str) -> Result<HashMap<(DeviceKind, String), String>
 /// Where an element sits in the option trees: the tree, and the group when it is one.
 type TreePlace = (usize, Option<usize>);
 
-struct ProfileReader<'a> {
-    path: std::path::PathBuf,
-    text: &'a str,
+#[derive(Default)]
+struct ProfileReader {
     maps: Vec<MapDef>,
     trees: Vec<OptionTree>,
     map_at: HashMap<usize, usize>,
@@ -319,46 +310,36 @@ struct ProfileReader<'a> {
 }
 
 fn parse_profile(text: &str) -> Result<(Vec<MapDef>, Vec<OptionTree>)> {
-    let (path, elements) = scan_root("defaultProfile.xml", text, "profile")?;
-    let mut reader = ProfileReader {
-        path,
-        text,
-        maps: Vec::new(),
-        trees: Vec::new(),
-        map_at: HashMap::new(),
-        action_at: HashMap::new(),
-        device_at: HashMap::new(),
-        tree_place: HashMap::new(),
-        curve_of: HashMap::new(),
-        child_filled: None,
-    };
+    let (_, elements) = scan_root("defaultProfile.xml", text, "profile")?;
+    let mut reader = ProfileReader::default();
     for (index, element) in elements.iter().enumerate() {
-        reader.read(&elements, index, element)?;
+        reader.read(index, element);
     }
     Ok((reader.maps, reader.trees))
 }
 
-impl ProfileReader<'_> {
-    fn read(&mut self, elements: &[Element], index: usize, element: &Element) -> Result<()> {
-        let parent = element.parent.map(|parent| (parent, &elements[parent]));
-        match (element.name.as_str(), parent) {
-            ("actionmap", Some((0, _))) => self.actionmap(index, element),
-            ("action", Some((parent, _))) => self.action(index, parent, element),
-            ("inputdata", Some((parent, _))) => self.inputdata(parent, element),
-            (name, Some((parent, _))) if self.action_at.contains_key(&parent) => {
-                self.action_child(index, parent, name);
+impl ProfileReader {
+    fn read(&mut self, index: usize, element: &Element) {
+        let Some(parent) = element.parent else {
+            return;
+        };
+        match element.name.as_str() {
+            "actionmap" if parent == 0 => self.actionmap(index, element),
+            "action" => self.action(index, parent, element),
+            "inputdata" => self.inputdata(parent, element),
+            _ if self.action_at.contains_key(&parent) => {
+                self.action_child(index, parent, element);
             }
-            ("optiontree", Some((0, _))) => self.optiontree(index, element)?,
-            ("optiongroup", Some((parent, _))) => self.optiongroup(index, parent, element)?,
-            ("nonlinearity_curve", Some((parent, _))) => {
+            "optiontree" if parent == 0 => self.optiontree(index, element),
+            "optiongroup" => self.optiongroup(index, parent, element),
+            "nonlinearity_curve" => {
                 if let Some(&(tree, Some(group))) = self.tree_place.get(&parent) {
                     self.curve_of.insert(index, (tree, Some(group)));
                 }
             }
-            ("point", Some((parent, _))) => self.point(parent, element)?,
+            "point" => self.point(parent, element),
             _ => {}
         }
-        Ok(())
     }
 
     fn actionmap(&mut self, index: usize, element: &Element) {
@@ -396,15 +377,20 @@ impl ProfileReader<'_> {
         });
     }
 
-    fn action_child(&mut self, index: usize, parent: usize, name: &str) {
-        let Some(kind) = tree_kind(name) else {
+    /// The device child states its bind as its own `input`, or through `<inputdata>` children.
+    fn action_child(&mut self, index: usize, parent: usize, element: &Element) {
+        let Some(kind) = tree_kind(&element.name) else {
             return;
         };
         let (map, action) = self.action_at[&parent];
+        let own = attr(element, "input");
         self.maps[map].actions[action]
             .defaults
-            .insert(kind, String::new());
+            .insert(kind, default_bind(own.unwrap_or_default()));
         self.device_at.insert(index, (map, action, kind));
+        if own.is_some() {
+            self.child_filled = Some(index);
+        }
     }
 
     /// Only the first `<inputdata>` of a device child is kept: the bind model has one bind per device.
@@ -420,13 +406,13 @@ impl ProfileReader<'_> {
         self.child_filled = Some(parent);
     }
 
-    fn optiontree(&mut self, index: usize, element: &Element) -> Result<()> {
+    fn optiontree(&mut self, index: usize, element: &Element) {
         let Some(kind) = attr(element, "type").and_then(tree_kind) else {
-            return Ok(());
+            return;
         };
         let sensitivity = match (
-            number(&self.path, self.text, element, "UISensitivityMin")?,
-            number(&self.path, self.text, element, "UISensitivityMax")?,
+            number(element, "UISensitivityMin"),
+            number(element, "UISensitivityMax"),
         ) {
             (Some(min), Some(max)) => Some((min, max)),
             _ => None,
@@ -434,51 +420,42 @@ impl ProfileReader<'_> {
         self.tree_place.insert(index, (self.trees.len(), None));
         self.trees.push(OptionTree {
             kind,
-            instances: number(&self.path, self.text, element, "instances")?.unwrap_or(1),
+            instances: number(element, "instances").unwrap_or(1),
             sensitivity,
             groups: Vec::new(),
         });
-        Ok(())
     }
 
-    fn optiongroup(&mut self, index: usize, parent: usize, element: &Element) -> Result<()> {
+    fn optiongroup(&mut self, index: usize, parent: usize, element: &Element) {
         let Some(&(tree, parent_group)) = self.tree_place.get(&parent) else {
-            return Ok(());
+            return;
         };
-        let (path, text) = (&self.path, self.text);
         let group = OptionGroup {
             name: attr(element, "name").unwrap_or_default().to_string(),
             parent: parent_group,
             label: label_key(element, "UILabel"),
-            show_invert: flag(path, text, element, "UIShowInvert")?,
-            show_curve: flag(path, text, element, "UIShowCurve")?,
-            show_sensitivity: flag(path, text, element, "UIShowSensitivity")?,
+            show_invert: flag(element, "UIShowInvert"),
+            show_curve: flag(element, "UIShowCurve"),
+            show_sensitivity: flag(element, "UIShowSensitivity"),
             invert: attr(element, "invert").map(|value| matches!(value.trim(), "1" | "true")),
             invert_cvar: attr(element, "invert_cvar")
                 .filter(|cvar| !cvar.is_empty())
                 .map(str::to_string),
-            exponent: number(path, text, element, "exponent")?,
+            exponent: number(element, "exponent"),
             curve: Vec::new(),
         };
         let groups = &mut self.trees[tree].groups;
         self.tree_place.insert(index, (tree, Some(groups.len())));
         groups.push(group);
-        Ok(())
     }
 
-    fn point(&mut self, parent: usize, element: &Element) -> Result<()> {
+    fn point(&mut self, parent: usize, element: &Element) {
         let Some(&(tree, Some(group))) = self.curve_of.get(&parent) else {
-            return Ok(());
+            return;
         };
-        let (path, text) = (&self.path, self.text);
-        let (Some(input), Some(output)) = (
-            number(path, text, element, "in")?,
-            number(path, text, element, "out")?,
-        ) else {
-            return Ok(());
-        };
-        self.trees[tree].groups[group].curve.push((input, output));
-        Ok(())
+        if let (Some(input), Some(output)) = (number(element, "in"), number(element, "out")) {
+            self.trees[tree].groups[group].curve.push((input, output));
+        }
     }
 }
 
@@ -541,7 +518,7 @@ mod tests {
         assert_eq!(data.build, "4.1.0-test");
         assert_eq!(data.maps.len(), 3);
         let counts: Vec<usize> = data.maps.iter().map(|map| map.actions.len()).collect();
-        assert_eq!(counts, [2, 3, 2]);
+        assert_eq!(counts, [3, 3, 2]);
 
         let seat = data.map("seat_general").unwrap();
         assert_eq!(seat.label.as_deref(), Some("ui_CgSeatGeneral"));
@@ -578,6 +555,19 @@ mod tests {
         let roll = action(&data, "spaceship_movement", "v_roll_left");
         assert_eq!(roll.defaults[&DeviceKind::Joystick], "button3");
         assert_eq!(roll.defaults[&DeviceKind::Gamepad], "");
+    }
+
+    #[test]
+    fn a_device_element_can_state_its_own_input() {
+        let data = data();
+        let breath = action(&data, "seat_general", "v_hold_breath");
+        assert_eq!(breath.defaults[&DeviceKind::Gamepad], "triggerl_btn");
+        assert_eq!(
+            breath.defaults[&DeviceKind::Keyboard],
+            "",
+            "a blank input still means explicitly unbound"
+        );
+        assert!(!breath.defaults.contains_key(&DeviceKind::Joystick));
     }
 
     #[test]
@@ -674,6 +664,24 @@ mod tests {
     }
 
     #[test]
+    fn labels_lose_surrounding_spaces() {
+        let mut sources = sources();
+        sources.strings.push_str(
+            "\r\nui_CiLookBehind=Look behind \r\nui_CiRollLeft=  \r\ninput_key_keyboard_f=F \r\n",
+        );
+        let data = GameData::from_sources("b".into(), &sources).unwrap();
+        assert_eq!(
+            data.label(Some("ui_CiLookBehind"), "v_look_behind"),
+            "Look behind"
+        );
+        assert_eq!(
+            data.label(Some("ui_CiRollLeft"), "v_roll_left"),
+            "Roll left"
+        );
+        assert_eq!(data.input_label("kb1_lalt+f").unwrap(), "Left Alt + F");
+    }
+
+    #[test]
     fn humanise_matches_the_screen_rules() {
         assert_eq!(humanise("spaceship_movement"), "Spaceship movement");
         assert_eq!(humanise("v_toggle_mining_mode"), "Toggle mining mode");
@@ -734,14 +742,28 @@ mod tests {
     }
 
     #[test]
-    fn a_number_that_does_not_parse_is_a_parse_error() {
+    fn a_number_that_does_not_parse_is_skipped_and_the_rest_still_loads() {
         let mut sources = sources();
         sources.profile = sources
             .profile
-            .replace("exponent=\"2\"", "exponent=\"two\"");
-        assert!(matches!(
-            GameData::from_sources("b".into(), &sources),
-            Err(Error::Parse { .. })
-        ));
+            .replace("exponent=\"2\"", "exponent=\"two\"")
+            .replace(
+                "name=\"flight_move_pitch\" UILabel=\"@ui_CoFlightPitch\" invert_cvar=\"cl_invertMouse\" UIShowCurve=\"1\"",
+                "name=\"flight_move_pitch\" UILabel=\"@ui_CoFlightPitch\" invert_cvar=\"cl_invertMouse\" UIShowCurve=\"yes\"",
+            )
+            .replace("<point in=\"0.5\"", "<point in=\"half\"")
+            .replace("UISensitivityMax=\"6.25\"", "UISensitivityMax=\"lots\"")
+            .replace("instances=\"8\"", "instances=\"eight\"");
+        let data = GameData::from_sources("b".into(), &sources).unwrap();
+        assert_eq!(data.maps.len(), 3, "every action name is still there");
+        let [keyboard, gamepad, joystick] = &data.option_trees[..] else {
+            panic!("three trees");
+        };
+        assert_eq!(joystick.groups[2].exponent, None);
+        assert_eq!(keyboard.groups[2].show_curve, 0);
+        assert_eq!(keyboard.groups[2].show_invert, 1);
+        assert_eq!(keyboard.sensitivity, None);
+        assert_eq!(joystick.instances, 1);
+        assert_eq!(gamepad.groups[1].curve, [(0.1, 0.015), (0.9, 0.78)]);
     }
 }
