@@ -208,6 +208,15 @@ pub fn label_of(name: &str) -> Option<&'static str> {
         })
 }
 
+/// An Escape press, which stops any listening cell.
+pub fn stops_listening(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Keyboard(keyboard::Event::KeyPressed { physical_key, .. })
+            if code(physical_key) == Some(Code::Escape)
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Waiting,

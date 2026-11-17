@@ -1,13 +1,13 @@
 use super::inputs::{
-    AXES, Known, Typed, captures, judge, kind_label, quick_buttons, quick_hats, quick_label,
-    slot_label, stick_label,
+    AXES, Known, Typed, judge, kind_label, quick_buttons, quick_hats, quick_label, slot_label,
+    stick_label,
 };
 use super::model::{Cell, CellRef, Line, MapEntry, Model, Row as BindRow};
 use super::source::{Failure, UNRECOGNISED};
 use super::{
     ADD_CAPTION, AddForm, CAPTURE_PROMPT, Doc, EMPTY_BODY, EMPTY_TITLE, Edit, GAME_DATA_LOADING,
-    Message, NOT_IN_BUILD, RESET_CAPTION, SHOW_UNLISTED, SaveForm, State, SwapForm, TRY_AGAIN, Tab,
-    UNBIND_CAPTION, add_input,
+    Message, NOT_IN_BUILD, PAD_PROMPT, RESET_CAPTION, SHOW_UNLISTED, STICK_PROMPT, SaveForm, State,
+    SwapForm, TRY_AGAIN, Tab, UNBIND_CAPTION, add_input,
 };
 use crate::icons;
 use crate::screen::{Screen, ToastKind};
@@ -786,10 +786,12 @@ impl State {
         ]
         .spacing(space::LG)
         .align_y(Alignment::Center);
-        let main = if captures(edit.cell.kind) {
-            capture_box(edit)
+        let main = if edit.cell.kind == DeviceKind::Joystick {
+            column![capture_box(edit), quick_picks()]
+                .spacing(space::MD)
+                .into()
         } else {
-            quick_picks()
+            capture_box(edit)
         };
         column![
             title,
@@ -908,11 +910,27 @@ fn current_bind(cell: Option<&Cell>, with_default: bool) -> Element<'_, Message>
     content.into()
 }
 
+/// What the capture box asks for while it listens, and how to stop.
+fn prompt(kind: DeviceKind) -> (&'static str, &'static str) {
+    match kind {
+        DeviceKind::Joystick => (
+            STICK_PROMPT,
+            "Or move an axis or push a hat. Escape stops listening.",
+        ),
+        DeviceKind::Gamepad => (PAD_PROMPT, "Escape stops listening."),
+        DeviceKind::Keyboard | DeviceKind::Mouse => (
+            CAPTURE_PROMPT,
+            "Hold Alt, Ctrl or Shift for a combination. Escape stops listening.",
+        ),
+    }
+}
+
 fn capture_box<'a>(edit: &'a Edit) -> Element<'a, Message> {
     let body: Element<'a, Message> = if edit.listening {
+        let (asks, stops) = prompt(edit.cell.kind);
         column![
-            text(CAPTURE_PROMPT).size(size::LABEL).font(FONT_SEMIBOLD),
-            hint("Hold Alt, Ctrl or Shift for a combination. Escape stops listening."),
+            text(asks).size(size::LABEL).font(FONT_SEMIBOLD),
+            hint(stops),
         ]
         .spacing(space::XS)
         .align_x(Alignment::Center)
@@ -935,7 +953,10 @@ fn capture_box<'a>(edit: &'a Edit) -> Element<'a, Message> {
     .on_enter(Message::CaptureHover(true))
     .on_exit(Message::CaptureHover(false));
     let mut content = column![area].spacing(space::SM);
-    if let Some(note) = edit.note {
+    if let Some(heard) = &edit.heard {
+        content = content.push(text(heard).size(size::CAPTION));
+    }
+    if let Some(note) = &edit.note {
         content = content.push(
             text(note)
                 .size(size::CAPTION)
