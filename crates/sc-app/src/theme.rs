@@ -967,8 +967,9 @@ pub mod binds {
     pub const CAPTURE_HEIGHT: f32 = 72.0;
     pub const QUICK_PICK_WIDTH: f32 = 40.0;
     pub const EDIT_SIDE_WIDTH: f32 = 320.0;
-    pub const ACTION_PORTION: u16 = 2;
-    pub const DEVICE_PORTION: u16 = 1;
+    pub const ACTION_PORTION: u16 = 4;
+    pub const DEVICE_PORTION: u16 = 2;
+    pub const WIDE_DEVICE_PORTION: u16 = 3;
 }
 
 /// A clickable bind cell in the keybinds table.

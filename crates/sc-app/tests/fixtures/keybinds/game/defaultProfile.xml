@@ -1,0 +1,102 @@
+<profile version="1" optionsVersion="2" rebindVersion="2">
+ <platforms>
+  <PC keyboard="1" mouse="1" gamepad="1" joystick="1"/>
+ </platforms>
+ <optiontree type="joystick" instances="8" name="root" UISensitivityMin="0.01" UISensitivityMax="2.0">
+  <optiongroup name="master" UILabel="@ui_KbOptMaster" UIShowCurve="0" UIShowInvert="0"/>
+ </optiontree>
+ <actionmap name="seat_general" version="1" UILabel="@ui_KbMapSeats" UICategory="@ui_KbCatGeneral">
+  <action name="v_eject" activationMode="delayed_press" keyboard="ralt+y" joystick=" " UILabel="@ui_KbEject" UIDescription="@ui_KbEjectDesc"/>
+  <action name="v_exit" activationMode="delayed_press" keyboard="y" gamepad="y" UILabel="@ui_KbExitSeat"/>
+  <action name="v_toggle_all_doors" activationMode="press" keyboard=" " UILabel="@ui_KbAllDoors"/>
+  <action name="v_emergency_exit" activationMode="press" keyboard="lshift+u"/>
+ </actionmap>
+ <actionmap name="spaceship_movement" version="2" UILabel="@ui_KbMapFlight" UICategory="@ui_KbCatSpaceship">
+  <action name="v_strafe_forward" activationMode="hold" keyboard="w" UILabel="@ui_KbStrafeForward"/>
+  <action name="v_strafe_back" activationMode="hold" keyboard="s" UILabel="@ui_KbStrafeBack"/>
+  <action name="v_strafe_left" activationMode="hold" keyboard="a" UILabel="@ui_KbStrafeLeft"/>
+  <action name="v_strafe_right" activationMode="hold" keyboard="d" UILabel="@ui_KbStrafeRight"/>
+  <action name="v_strafe_up" activationMode="hold" keyboard="space" UILabel="@ui_KbStrafeUp"/>
+  <action name="v_strafe_down" activationMode="hold" keyboard="lctrl" UILabel="@ui_KbStrafeDown"/>
+  <action name="v_roll_left" activationMode="hold" keyboard="q" UILabel="@ui_KbRollLeft"/>
+  <action name="v_roll_right" activationMode="hold" keyboard="e" UILabel="@ui_KbRollRight"/>
+  <action name="v_pitch" mouse="maxis_y" gamepad="thumbry" joystick="y" optionGroup="flight_move_pitch" UILabel="@ui_KbPitch"/>
+  <action name="v_yaw" mouse="maxis_x" gamepad="thumbrx" joystick="x" optionGroup="flight_move_yaw" UILabel="@ui_KbYaw"/>
+  <action name="v_roll" joystick="rotz" optionGroup="flight_move_roll" UILabel="@ui_KbRoll"/>
+  <action name="v_strafe_lateral" gamepad="thumblx" joystick=" " UILabel="@ui_KbStrafeLateral"/>
+  <action name="v_strafe_vertical" joystick=" " UILabel="@ui_KbStrafeVertical"/>
+  <action name="v_strafe_longitudinal" gamepad="thumbly" joystick=" " UILabel="@ui_KbStrafeLongitudinal"/>
+  <action name="v_afterburner" activationMode="hold" keyboard="lshift" gamepad="thumbl" UILabel="@ui_KbBoost" UIDescription="@ui_KbBoostDesc"/>
+  <action name="v_space_brake" activationMode="hold" keyboard="x" gamepad="b" UILabel="@ui_KbSpaceBrake"/>
+  <action name="v_ifcs_toggle_vector_decoupling" activationMode="press" keyboard="v" UILabel="@ui_KbDecoupled"/>
+  <action name="v_toggle_landing_system" activationMode="press" keyboard="n" UILabel="@ui_KbLandingMode"/>
+  <action name="v_toggle_quantum_mode" activationMode="press" keyboard="b" UILabel="@ui_KbQuantumMode"/>
+  <action name="v_toggle_cruise_control" activationMode="press" keyboard="c" UILabel="@ui_KbCruiseControlRenamed"/>
+  <action name="v_ifcs_debug_overlay" activationMode="press" keyboard="lalt+f12"/>
+ </actionmap>
+ <actionmap name="spaceship_targeting" version="3" UILabel="@ui_KbMapTargeting" UICategory="@ui_KbCatSpaceship">
+  <action name="v_target_cycle_hostile_fwd" activationMode="press" keyboard="r" UILabel="@ui_KbNextHostile"/>
+  <action name="v_target_cycle_hostile_back" activationMode="press" keyboard="lalt+r" UILabel="@ui_KbPreviousHostile"/>
+  <action name="v_target_cycle_all_fwd" activationMode="press" UILabel="@ui_KbNextTarget"/>
+  <action name="v_target_cycle_all_back" activationMode="press" UILabel="@ui_KbPreviousTarget"/>
+  <action name="v_target_pin_selected" activationMode="press" keyboard="1" UILabel="@ui_KbPinTarget"/>
+  <action name="v_target_toggle_lock" activationMode="press" keyboard="t" UILabel="@ui_KbLockTarget"/>
+  <action name="v_toggle_look_ahead" activationMode="press" keyboard="lalt+l" UILabel="@ui_KbLookAhead"/>
+  <action name="v_target_reticle_focus" activationMode="hold" UILabel="@ui_KbFocusTarget"/>
+  <action name="v_target_unpin_all" activationMode="press" keyboard="0" UILabel="@ui_KbUnpinAll"/>
+  <action name="v_target_hail" activationMode="press" keyboard="5" UILabel="@ui_KbHail"/>
+ </actionmap>
+ <actionmap name="spaceship_weapons" version="4" UILabel="@ui_KbMapWeapons" UICategory="@ui_KbCatSpaceship">
+  <action name="v_attack1_group1" activationMode="hold" mouse="mouse1" gamepad="triggerr_btn" joystick="button1" UILabel="@ui_KbFireGroup1"/>
+  <action name="v_attack1_group2" activationMode="hold" mouse="mouse2" gamepad="triggerl_btn" joystick="button2" UILabel="@ui_KbFireGroup2"/>
+  <action name="v_weapon_launch_missile" activationMode="hold" mouse="mouse3" UILabel="@ui_KbLaunchMissile"/>
+  <action name="v_weapon_cycle_missile_fwd" activationMode="press" UILabel="@ui_KbNextMissile"/>
+  <action name="v_weapon_cycle_missile_back" activationMode="press" UILabel="@ui_KbPreviousMissile"/>
+  <action name="v_weapon_toggle_gimbal_mode" activationMode="press" keyboard="g" UILabel="@ui_KbGimbalMode"/>
+  <action name="v_master_mode_cycle" activationMode="press" mouse="mouse4" UILabel="@ui_KbMasterMode"/>
+  <action name="v_weapon_preset_cycle" activationMode="press" keyboard="5" UILabel="@ui_KbWeaponPresets"/>
+  <action name="v_weapon_debug_fire_rate" activationMode="press" keyboard="lalt+f11"/>
+ </actionmap>
+ <actionmap name="spaceship_mining" version="2" UILabel="@ui_KbMapMining" UICategory="@ui_KbCatSpaceship">
+  <action name="v_toggle_mining_mode" activationMode="press" keyboard="m" UILabel="@ui_KbMiningMode"/>
+  <action name="v_increase_mining_throttle" activationMode="hold" UILabel="@ui_KbMorePower"/>
+  <action name="v_decrease_mining_throttle" activationMode="hold" UILabel="@ui_KbLessPower"/>
+  <action name="v_mining_use_consumable1" activationMode="press" keyboard="lalt+1" UILabel="@ui_KbModule1"/>
+  <action name="v_mining_use_consumable2" activationMode="press" keyboard="lalt+2" UILabel="@ui_KbModule2"/>
+  <action name="v_toggle_mining_laser_fire" activationMode="press" UILabel="@ui_KbMiningFire"/>
+  <action name="v_toggle_mining_laser_type" activationMode="press" keyboard=" " UILabel="@ui_KbMiningLaserType"/>
+ </actionmap>
+ <actionmap name="player" version="5" UILabel="@ui_KbMapCharacter" UICategory="@ui_KbCatOnFoot">
+  <action name="moveforward" activationMode="hold" keyboard="w" gamepad="thumbly" UILabel="@ui_KbMoveForward"/>
+  <action name="moveback" activationMode="hold" keyboard="s" UILabel="@ui_KbMoveBack"/>
+  <action name="moveleft" activationMode="hold" keyboard="a" UILabel="@ui_KbMoveLeft"/>
+  <action name="moveright" activationMode="hold" keyboard="d" UILabel="@ui_KbMoveRight"/>
+  <action name="jump" activationMode="press" keyboard="space" gamepad="a" UILabel="@ui_KbJump"/>
+  <action name="crouch" activationMode="press" keyboard="c" gamepad="thumbr" UILabel="@ui_KbCrouch"/>
+  <action name="prone" activationMode="press" keyboard="x" UILabel="@ui_KbProne"/>
+  <action name="sprint" activationMode="hold" keyboard="lshift" gamepad="thumbl" UILabel="@ui_KbSprint"/>
+  <action name="attack1" activationMode="hold" mouse="mouse1" gamepad="triggerr_btn" UILabel="@ui_KbFire"/>
+  <action name="zoom" activationMode="hold" mouse="mouse2" gamepad="triggerl_btn" UILabel="@ui_KbAim"/>
+  <action name="reload" activationMode="press" keyboard="r" gamepad="x" UILabel="@ui_KbReload"/>
+  <action name="ui_flashlight" activationMode="press" keyboard="t" UILabel="@ui_KbFlashlight"/>
+  <action name="selectpistol" activationMode="press" keyboard="1" UILabel="@ui_KbSidearm"/>
+  <action name="selectprimary" activationMode="press" keyboard="2" UILabel="@ui_KbPrimary"/>
+  <action name="selectsecondary" activationMode="press" keyboard="3" UILabel="@ui_KbSecondary"/>
+  <action name="pc_select_gadget" activationMode="press" keyboard="4" UILabel="@ui_KbGadget"/>
+  <action name="leanleft" activationMode="hold" keyboard="q" UILabel="@ui_KbLeanLeft"/>
+  <action name="leanright" activationMode="hold" keyboard="e" UILabel="@ui_KbLeanRight"/>
+  <action name="pc_debug_noclip" activationMode="press" keyboard="lalt+f10"/>
+ </actionmap>
+ <actionmap name="vehicle_driver" version="2" UILabel="@ui_KbMapDriving" UICategory="@ui_KbCatVehicles">
+  <action name="v_drive_forward" activationMode="hold" keyboard="w" UILabel="@ui_KbAccelerate"/>
+  <action name="v_drive_back" activationMode="hold" keyboard="s" UILabel="@ui_KbReverse"/>
+  <action name="v_drive_left" activationMode="hold" keyboard="a" UILabel="@ui_KbSteerLeft"/>
+  <action name="v_drive_right" activationMode="hold" keyboard="d" UILabel="@ui_KbSteerRight"/>
+  <action name="v_drive_brake" activationMode="hold" keyboard="space" UILabel="@ui_KbHandbrake"/>
+  <action name="v_drive_boost" activationMode="hold" keyboard="lshift" UILabel="@ui_KbDriveBoost"/>
+  <action name="v_drive_horn" activationMode="hold" keyboard="h" UILabel="@ui_KbHorn"/>
+  <action name="v_drive_headlights" activationMode="press" keyboard="l" UILabel="@ui_KbHeadlights"/>
+  <action name="v_drive_steer" gamepad="thumblx" joystick="x" UILabel="@ui_KbSteering"/>
+  <action name="v_drive_throttle" gamepad="thumbly" joystick=" " UILabel="@ui_KbThrottle"/>
+ </actionmap>
+</profile>

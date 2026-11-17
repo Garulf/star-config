@@ -908,6 +908,32 @@ pub fn seed_game_data_with(ctx: &Context, attributes: &str, strings: &str) {
     }
 }
 
+// Keybinds game data -------------------------------------------------------------
+
+/// Defaults for the demo keybinds' action maps: labels, categories and default binds, a
+/// few actions the game's menu hides, one label key `global.ini` lacks, and one demo action
+/// the build no longer has (`v_mining_use_consumable3`).
+fn keybinds_game_sources() -> sc_core::defaults::Sources {
+    sc_core::defaults::Sources {
+        profile: include_str!("../tests/fixtures/keybinds/game/defaultProfile.xml").into(),
+        attributes: include_str!("../tests/fixtures/game_data/attributes.xml").into(),
+        key_names: include_str!("../tests/fixtures/keybinds/game/keybinding_localization.xml")
+            .into(),
+        strings: include_str!("../tests/fixtures/keybinds/game/global.ini").into(),
+    }
+}
+
+/// Like [`seed_game_data`], with the keybinds defaults.
+pub fn seed_keybinds_game_data(ctx: &Context) {
+    let sources = keybinds_game_sources();
+    for channel in ctx.channels.iter().filter(|c| c.build_id().is_some()) {
+        if sc_core::install::resolve_ci(&channel.dir, "Data.p4k").is_none() {
+            fs::write(channel.dir.join("Data.p4k"), b"placeholder").unwrap();
+        }
+        sc_core::defaults::seed_cache(channel, &ctx.dirs.game_data(), &sources).unwrap();
+    }
+}
+
 // Shader caches ------------------------------------------------------------------
 
 pub fn shader_cache_dir(temp: &Path) -> PathBuf {

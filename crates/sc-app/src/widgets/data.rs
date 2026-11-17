@@ -35,10 +35,15 @@ pub fn badge<'a, M: 'a>(count: usize) -> Element<'a, M> {
 
 /// A keyboard key, for showing bound inputs such as `LCtrl` or `F`.
 pub fn key_cap<'a, M: 'a>(content: impl IntoFragment<'a>) -> Element<'a, M> {
-    container(text(content).size(size::CAPTION).font(FONT_SEMIBOLD))
-        .padding(PILL_PADDING)
-        .style(theme::key_cap)
-        .into()
+    container(
+        text(content)
+            .size(size::CAPTION)
+            .font(FONT_SEMIBOLD)
+            .wrapping(text::Wrapping::None),
+    )
+    .padding(PILL_PADDING)
+    .style(theme::key_cap)
+    .into()
 }
 
 /// A rounded pill with a coloured dot, for live status.

@@ -2,10 +2,13 @@
 
 use super::capture;
 use sc_core::actionmaps::{DeviceKind, Slot, format_input, parse_input};
+use sc_core::defaults::GameData;
 
 pub const AXES: [&str; 8] = ["x", "y", "z", "rotx", "roty", "rotz", "slider1", "slider2"];
 pub const HAT_DIRECTIONS: [&str; 4] = ["up", "down", "left", "right"];
 pub const QUICK_BUTTONS: u32 = 32;
+/// The game numbers sticks js1 to js8.
+pub const STICKS: u32 = 8;
 const MAX_BUTTON: u32 = 128;
 const MAX_HAT: u32 = 4;
 
@@ -66,9 +69,12 @@ fn is_known(kind: DeviceKind, rest: &str) -> bool {
     };
     let modifiers_ok = modifiers.iter().all(|part| capture::is_modifier(part));
     match kind {
-        DeviceKind::Keyboard => parts
-            .iter()
-            .all(|part| capture::is_key(part) || capture::is_modifier(part)),
+        DeviceKind::Keyboard => {
+            parts
+                .iter()
+                .all(|part| capture::is_key(part) || capture::is_modifier(part))
+                || (modifiers_ok && capture::is_mouse(last))
+        }
         DeviceKind::Mouse => modifiers_ok && capture::is_mouse(last),
         DeviceKind::Joystick => modifiers_ok && is_joystick(last),
         DeviceKind::Gamepad => modifiers_ok && GAMEPAD.iter().any(|(name, _)| name == last),
@@ -97,9 +103,20 @@ fn is_joystick(name: &str) -> bool {
         || hat(name).is_some_and(|(n, _)| n <= MAX_HAT)
 }
 
-/// Key cap labels for an input after its device prefix: `lalt+f` gives `L Alt`, `F`.
-pub fn caps(kind: DeviceKind, rest: &str) -> Vec<String> {
-    rest.split('+').map(|part| cap(kind, part.trim())).collect()
+/// Key cap labels for a whole input, in the game's words where it has them and in ours
+/// for the rest. An input without a device prefix is shown as written.
+pub fn input_caps(game: Option<&GameData>, input: &str) -> Vec<String> {
+    let Some((slot, rest)) = parse_input(input) else {
+        return vec![input.to_string()];
+    };
+    rest.split('+')
+        .map(str::trim)
+        .map(|part| {
+            game.and_then(|game| game.input_label(&format_input(slot, part)))
+                .filter(|named| !named.eq_ignore_ascii_case(part))
+                .unwrap_or_else(|| cap(slot.kind, part))
+        })
+        .collect()
 }
 
 fn cap(kind: DeviceKind, part: &str) -> String {
@@ -186,25 +203,18 @@ pub fn captures(kind: DeviceKind) -> bool {
     matches!(kind, DeviceKind::Keyboard | DeviceKind::Mouse)
 }
 
-const ACTION_PREFIXES: [&str; 2] = ["v_", "pc_"];
-
-/// `spaceship_movement` becomes `Spaceship movement`, `v_toggle_mining_mode` becomes
-/// `Toggle mining mode`. The game's own labels are not available.
-pub fn humanise(raw: &str) -> String {
-    let trimmed = ACTION_PREFIXES
-        .iter()
-        .find_map(|prefix| raw.strip_prefix(prefix))
-        .filter(|rest| !rest.is_empty())
-        .unwrap_or(raw);
-    capitalised(&trimmed.replace('_', " "))
+pub fn kind_label(kind: DeviceKind) -> &'static str {
+    match kind {
+        DeviceKind::Keyboard => "Keyboard",
+        DeviceKind::Mouse => "Mouse",
+        DeviceKind::Gamepad => "Gamepad",
+        DeviceKind::Joystick => "Joystick",
+    }
 }
 
-fn capitalised(words: &str) -> String {
-    let mut chars = words.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
+/// The stick as the game's files name it, such as `js2`.
+pub fn stick_label(slot: Slot) -> String {
+    format!("js{}", slot.instance)
 }
 
 /// A product name from the file without its device GUID.
@@ -251,30 +261,42 @@ mod tests {
             judge(JS2, "buton5"),
             Typed::Invalid("\"buton5\" is not an input the game knows".into())
         );
-        assert!(matches!(judge(KB, "mouse1"), Typed::Invalid(_)));
+        assert_eq!(judge(KB, "mouse3"), Typed::Valid("kb1_mouse3".into()));
+        assert_eq!(
+            judge(KB, "lctrl+mouse4"),
+            Typed::Valid("kb1_lctrl+mouse4".into())
+        );
+        assert!(matches!(judge(KB, "mouse3+f"), Typed::Invalid(_)));
         assert!(matches!(judge(JS2, "button0"), Typed::Invalid(_)));
     }
 
     #[test]
     fn caps_name_keys_buttons_and_axes() {
-        assert_eq!(caps(DeviceKind::Keyboard, "lalt+f"), ["L Alt", "F"]);
-        assert_eq!(caps(DeviceKind::Joystick, "button5"), ["Button 5"]);
-        assert_eq!(caps(DeviceKind::Joystick, "Button3"), ["Button 3"]);
-        assert_eq!(caps(DeviceKind::Joystick, "x"), ["X axis"]);
-        assert_eq!(caps(DeviceKind::Mouse, "mwheel_down"), ["Wheel down"]);
-        assert_eq!(caps(DeviceKind::Keyboard, "oddkey"), ["oddkey"]);
+        assert_eq!(input_caps(None, "kb1_lalt+f"), ["L Alt", "F"]);
+        assert_eq!(input_caps(None, "js1_button5"), ["Button 5"]);
+        assert_eq!(input_caps(None, "js1_Button3"), ["Button 3"]);
+        assert_eq!(input_caps(None, "js1_x"), ["X axis"]);
+        assert_eq!(input_caps(None, "mo1_mwheel_down"), ["Wheel down"]);
+        assert_eq!(input_caps(None, "kb1_oddkey"), ["oddkey"]);
     }
 
     #[test]
     fn names_read_like_words() {
-        assert_eq!(humanise("spaceship_movement"), "Spaceship movement");
-        assert_eq!(humanise("v_toggle_mining_mode"), "Toggle mining mode");
-        assert_eq!(humanise("jump"), "Jump");
         assert_eq!(
             product_name("VKB Gladiator NXT L  {0200231D-0000-0000-0000-504944564944}"),
             "VKB Gladiator NXT L"
         );
         assert_eq!(slot_label(JS2), "Joystick 2");
         assert_eq!(slot_label(KB), "Keyboard");
+        assert_eq!(stick_label(JS2), "js2");
+        assert_eq!(kind_label(DeviceKind::Gamepad), "Gamepad");
+    }
+
+    #[test]
+    fn input_caps_use_our_names_without_game_data() {
+        assert_eq!(input_caps(None, "kb1_lalt+f"), ["L Alt", "F"]);
+        assert_eq!(input_caps(None, "kb1_mouse3"), ["Middle click"]);
+        assert_eq!(input_caps(None, "js2_button5"), ["Button 5"]);
+        assert_eq!(input_caps(None, "odd"), ["odd"]);
     }
 }

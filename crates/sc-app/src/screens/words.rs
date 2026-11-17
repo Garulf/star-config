@@ -10,7 +10,6 @@ pub const GAME_RUNNING: &str =
 pub const ROLLBACK_FAILED: &str = "Writing failed, and putting the earlier files back failed too. \
     Some files may have changed. The snapshot on the Backups screen holds the originals.";
 
-#[allow(dead_code)] // the Keybinds and Config screens show it while the defaults load
 pub const GAME_DATA_LOADING: &str =
     "Reading the game's controls and settings. The first time after a patch takes a few seconds.";
 

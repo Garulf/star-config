@@ -4,10 +4,12 @@ mod model;
 mod source;
 mod view;
 
+pub use crate::screens::words::GAME_DATA_LOADING;
 pub use model::CellRef;
 pub use source::{CURRENT_LABEL, Source, SourceChoice, UNRECOGNISED, layout_name};
 
 use crate::context::Context;
+use crate::game_data::Loaded as GameLoad;
 use crate::screen::{Action, Confirm, Origin, Toast};
 use crate::screens::backups::words;
 use crate::screens::edits::{CHANGED_ON_DISK, FORMAT_CHANGED};
@@ -17,19 +19,23 @@ use crate::widgets::VirtualListState;
 use crate::work;
 use capture::{Capture, Outcome};
 use iced::{Element, Task};
-use inputs::{Typed, captures, judge};
+use inputs::{STICKS, Typed, captures, judge};
 use model::{Line, Model};
 use sc_core::actionmaps::{ActionMaps, DeviceKind, Op, Slot, layout_file_name};
 use sc_core::backup::SnapshotId;
+use sc_core::defaults::GameData;
 use sc_core::guard::Writer;
 use sc_core::staging::{Document, Staged};
 use source::{Handoff, Loaded, Opened, WriteFailure};
 use std::fmt;
 use std::path::PathBuf;
 
-pub const RESET_CAPTION: &str = "Removes your bind so the game's default applies.";
+pub const RESET_CAPTION: &str = "Removes your bind so the game's default applies again.";
 pub const UNBIND_CAPTION: &str =
-    "Not available yet. How the game stores \"no bind\" has not been confirmed.";
+    "Leaves this action with no bind on this device, even if the game has a default.";
+pub const SHOW_UNLISTED: &str = "Show actions the game's menu hides";
+pub const NOT_IN_BUILD: &str = "Not in this game version";
+pub const NO_GAME_DATA_NOTE: &str = "Showing only the binds stored in your files.";
 pub const ADD_CAPTION: &str = "For actions that have no bind in this file yet. Use the action's name as the game writes it, for example v_toggle_mining_mode.";
 pub const CAPTURE_PROMPT: &str = "Press a key or a mouse button";
 pub const UNKNOWN_KEY: &str = "This key has no known name. Type it below.";
@@ -37,7 +43,6 @@ pub const CHANGED_AGAIN: &str = CHANGED_ON_DISK;
 pub const EMPTY_TITLE: &str = "No keybinds yet";
 pub const EMPTY_BODY: &str = "Change any bind in the game once, or export a profile from Options, Keybindings, Control Profiles. It shows up here after that.";
 pub const CLOSE_TO_APPLY: &str = GAME_RUNNING;
-const KEYBOARD_ONLY: &str = "Press a key. Mouse buttons go in the Mouse column.";
 const MOUSE_ONLY: &str =
     "Press a mouse button or turn the wheel over this box. Keys go in the Keyboard column.";
 
@@ -68,6 +73,8 @@ enum Doc {
 
 struct Edit {
     cell: CellRef,
+    /// Where Set writes: the cell's current device, or the stick picked for it.
+    slot: Slot,
     typed: String,
     listening: bool,
     hovered: bool,
@@ -107,6 +114,11 @@ pub struct State {
     source: Option<Source>,
     doc: Doc,
     away_pending: usize,
+    game: Option<GameLoad>,
+    game_loading: bool,
+    /// Why the game's defaults are missing, in words, once a load has said so.
+    no_game_note: Option<String>,
+    show_unlisted: bool,
     model: Option<Model>,
     lines: Vec<Line>,
     map: Option<String>,
@@ -120,7 +132,7 @@ pub struct State {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Loaded(PathBuf, Loaded),
+    Loaded(PathBuf, Loaded, GameLoad),
     Listed(PathBuf, Vec<SourceChoice>),
     PickSource(SourceChoice),
     SwitchSource(Source),
@@ -128,6 +140,7 @@ pub enum Message {
     PickMap(Option<String>),
     Search(String),
     ToggleConflicts,
+    ShowUnlisted(bool),
     Scrolled(f32),
     RawScrolled(f32),
     /// The bind table's visible height, measured as it shows or resizes.
@@ -139,7 +152,9 @@ pub enum Message {
     Listen,
     Typed(String),
     QuickPick(String),
+    PickStick(SlotChoice),
     Set,
+    Unbind,
     Reset,
     OpenAdd,
     AddMap(String),
@@ -166,6 +181,10 @@ impl State {
             source: None,
             doc: Doc::Loading,
             away_pending: 0,
+            game: None,
+            game_loading: false,
+            no_game_note: None,
+            show_unlisted: false,
             model: None,
             lines: Vec::new(),
             map: None,
@@ -192,10 +211,20 @@ impl State {
         }
         let wanted = self.source.clone();
         let dir = channel.dir.clone();
+        let store = ctx.game_data();
+        self.game_loading = store.cached(&channel).is_none();
+        let cache_root = ctx.dirs.game_data();
         work::background(
-            move || source::load(&channel, wanted),
-            move |loaded| Message::Loaded(dir, loaded),
+            move || {
+                let game = store.load(&channel, &cache_root);
+                (source::load(&channel, wanted), game)
+            },
+            move |(loaded, game)| Message::Loaded(dir, loaded, game),
         )
+    }
+
+    fn game(&self) -> Option<&GameData> {
+        game_of(&self.game)
     }
 
     /// True while a keyboard or mouse cell is listening, so the shell sends raw input here
@@ -217,8 +246,8 @@ impl State {
 
     pub fn update(&mut self, message: Message, ctx: &Context) -> Action<Message> {
         match message {
-            Message::Loaded(dir, loaded) => {
-                self.loaded(dir, loaded);
+            Message::Loaded(dir, loaded, game) => {
+                self.loaded(dir, loaded, game);
                 Action::none()
             }
             Message::Listed(dir, sources) => {
@@ -251,6 +280,22 @@ impl State {
                 self.refilter();
                 Action::none()
             }
+            Message::ShowUnlisted(show) => {
+                self.show_unlisted = show;
+                let hidden = |model: &Model, map: &str| {
+                    model
+                        .maps
+                        .iter()
+                        .all(|entry| entry.name != map || entry.count(show) == 0)
+                };
+                if let (Some(model), Some(map)) = (&self.model, &self.map)
+                    && hidden(model, map)
+                {
+                    self.map = None;
+                }
+                self.refilter();
+                Action::none()
+            }
             Message::Scrolled(offset) => {
                 self.list.offset = offset;
                 Action::none()
@@ -274,13 +319,14 @@ impl State {
             Message::Input(event) => self.input(&event),
             Message::Listen => {
                 if let Panel::Edit(edit) = &mut self.panel {
-                    edit.listening = captures(edit.cell.slot.kind);
+                    edit.listening = captures(edit.cell.kind);
                     edit.note = None;
                     edit.capture = Capture::default();
                 }
                 Action::none()
             }
             Message::Set => self.set_typed(),
+            Message::Unbind => self.unbind(),
             Message::Reset => self.reset(),
             Message::OpenAdd => {
                 self.open_add();
@@ -316,6 +362,12 @@ impl State {
             (Panel::Edit(edit), Message::Typed(typed) | Message::QuickPick(typed)) => {
                 edit.typed = typed;
             }
+            (Panel::Edit(edit), Message::PickStick(choice))
+                if edit.cell.kind == DeviceKind::Joystick
+                    && choice.slot.kind == DeviceKind::Joystick =>
+            {
+                edit.slot = choice.slot;
+            }
             (Panel::Add(form), Message::AddMap(map)) => form.map = map,
             (Panel::Add(form), Message::AddAction(action)) => form.action = action,
             (Panel::Add(form), Message::AddSlot(slot)) => form.slot = Some(slot),
@@ -327,8 +379,19 @@ impl State {
         }
     }
 
-    fn loaded(&mut self, dir: PathBuf, loaded: Loaded) {
-        if self.channel.as_ref() != Some(&dir) || self.pending() > 0 {
+    fn loaded(&mut self, dir: PathBuf, loaded: Loaded, game: GameLoad) {
+        if self.channel.as_ref() != Some(&dir) {
+            return;
+        }
+        self.no_game_note = game
+            .as_ref()
+            .as_ref()
+            .err()
+            .map(|reason| format!("{NO_GAME_DATA_NOTE} {}", reason.message()));
+        self.game = Some(game);
+        self.game_loading = false;
+        if self.pending() > 0 {
+            self.refresh();
             return;
         }
         self.sources = loaded.sources;
@@ -354,10 +417,11 @@ impl State {
         self.raw_list = VirtualListState::default();
     }
 
-    /// Rebuilds the table after the document changed.
+    /// Rebuilds the table after the document or the game's defaults changed.
     fn refresh(&mut self) {
         if let Doc::Ready { staged, .. } = &self.doc {
-            self.model = Some(Model::build(staged.current(), staged.base()));
+            let game = game_of(&self.game);
+            self.model = Some(Model::build(game, staged.current(), staged.base()));
         } else if !matches!(self.doc, Doc::Away) {
             self.model = None;
         }
@@ -367,7 +431,9 @@ impl State {
             self.map = None;
         }
         let keep = match (&self.panel, &self.model) {
-            (Panel::Edit(edit), Some(model)) => model.column(edit.cell.slot).is_some(),
+            (Panel::Edit(edit), Some(model)) => {
+                model.row(&edit.cell.map, &edit.cell.action).is_some()
+            }
             (Panel::Closed, _) => true,
             (_, model) => model.is_some(),
         };
@@ -379,7 +445,12 @@ impl State {
 
     fn refilter(&mut self) {
         self.lines = match &self.model {
-            Some(model) => model.lines(self.map.as_deref(), &self.search, self.conflicts_only),
+            Some(model) => model.lines(
+                self.map.as_deref(),
+                &self.search,
+                self.conflicts_only,
+                self.show_unlisted,
+            ),
             None => Vec::new(),
         };
         self.list = VirtualListState::default();
@@ -465,9 +536,18 @@ impl State {
             return;
         };
         let typed = current.rest().unwrap_or_default().to_string();
-        let listening = captures(cell.slot.kind);
+        let slot = current
+            .slot()
+            .or_else(|| current.default_slot())
+            .filter(|slot| slot.kind == cell.kind)
+            .unwrap_or(Slot {
+                kind: cell.kind,
+                instance: 1,
+            });
+        let listening = captures(cell.kind);
         self.panel = Panel::Edit(Edit {
             cell,
+            slot,
             typed,
             listening,
             hovered: false,
@@ -494,7 +574,7 @@ impl State {
                 edit.note = Some(UNKNOWN_KEY);
                 Action::none()
             }
-            Outcome::Done(rest) => match judge(edit.cell.slot, &rest) {
+            Outcome::Done(rest) => match judge(edit.slot, &rest) {
                 Typed::Valid(input) => {
                     edit.listening = false;
                     edit.note = None;
@@ -503,10 +583,10 @@ impl State {
                     self.stage(op)
                 }
                 Typed::Empty | Typed::Invalid(_) => {
-                    edit.note = Some(if edit.cell.slot.kind == DeviceKind::Mouse {
+                    edit.note = Some(if edit.cell.kind == DeviceKind::Mouse {
                         MOUSE_ONLY
                     } else {
-                        KEYBOARD_ONLY
+                        UNKNOWN_KEY
                     });
                     Action::none()
                 }
@@ -518,7 +598,7 @@ impl State {
         let Panel::Edit(edit) = &mut self.panel else {
             return Action::none();
         };
-        let Typed::Valid(input) = judge(edit.cell.slot, &edit.typed) else {
+        let Typed::Valid(input) = judge(edit.slot, &edit.typed) else {
             return Action::none();
         };
         edit.listening = false;
@@ -526,23 +606,48 @@ impl State {
         self.stage(op)
     }
 
-    fn reset(&mut self) -> Action<Message> {
+    /// The cell being edited, as the table shows it now.
+    fn edited_cell(&self) -> Option<(&Edit, &model::Cell)> {
         let Panel::Edit(edit) = &self.panel else {
+            return None;
+        };
+        let cell = self.model.as_ref()?.cell(&edit.cell)?;
+        Some((edit, cell))
+    }
+
+    /// Removes every entry of the cell's kind from the action, whichever stick it is on.
+    fn reset(&mut self) -> Action<Message> {
+        let Some((edit, cell)) = self.edited_cell() else {
             return Action::none();
         };
-        let bound = self
-            .model
-            .as_ref()
-            .and_then(|model| model.cell(&edit.cell))
-            .is_some_and(|cell| cell.current.is_some());
-        if !bound {
+        if !cell.resettable() {
             return Action::none();
         }
         let op = Op::Reset {
             map: edit.cell.map.clone(),
             action: edit.cell.action.clone(),
-            kind: edit.cell.slot.kind,
+            kind: edit.cell.kind,
         };
+        self.stage_from_panel(op)
+    }
+
+    /// Writes the game's "no bind" on the device the cell shows, replacing every entry of its kind.
+    fn unbind(&mut self) -> Action<Message> {
+        let Some((edit, cell)) = self.edited_cell() else {
+            return Action::none();
+        };
+        let Some(slot) = cell.slot().filter(|_| cell.unbindable()) else {
+            return Action::none();
+        };
+        let op = Op::Unbind {
+            map: edit.cell.map.clone(),
+            action: edit.cell.action.clone(),
+            slot,
+        };
+        self.stage_from_panel(op)
+    }
+
+    fn stage_from_panel(&mut self, op: Op) -> Action<Message> {
         if let Panel::Edit(edit) = &mut self.panel {
             edit.listening = false;
             edit.typed.clear();
@@ -583,21 +688,40 @@ impl State {
         SlotChoice { slot, label }
     }
 
+    /// Devices offered by the add form: keyboard, mouse and gamepad, then each known stick.
     fn slot_choices(&self) -> Vec<SlotChoice> {
-        let mut slots: Vec<Slot> = self
+        let kinds = [DeviceKind::Keyboard, DeviceKind::Mouse, DeviceKind::Gamepad];
+        let mut slots: Vec<Slot> = kinds
+            .into_iter()
+            .map(|kind| Slot { kind, instance: 1 })
+            .collect();
+        let mut sticks = self
             .model
             .as_ref()
-            .map(|model| model.columns.clone())
+            .map(Model::joysticks)
             .unwrap_or_default();
-        for kind in [DeviceKind::Keyboard, DeviceKind::Mouse] {
-            if !slots.iter().any(|slot| slot.kind == kind) {
-                slots.push(Slot { kind, instance: 1 });
-            }
+        if sticks.is_empty() {
+            sticks.push(Slot {
+                kind: DeviceKind::Joystick,
+                instance: 1,
+            });
         }
-        slots.sort();
+        slots.extend(sticks);
         slots
             .into_iter()
             .map(|slot| self.slot_choice(slot))
+            .collect()
+    }
+
+    /// Every stick the game can tell apart, for the joystick cell's picker.
+    fn stick_choices(&self) -> Vec<SlotChoice> {
+        (1..=STICKS)
+            .map(|instance| {
+                self.slot_choice(Slot {
+                    kind: DeviceKind::Joystick,
+                    instance,
+                })
+            })
             .collect()
     }
 
@@ -612,7 +736,7 @@ impl State {
     }
 
     fn open_add(&mut self) {
-        if !self.writable() {
+        if !self.writable() || self.game().is_some() {
             return;
         }
         let map = self.map.clone().unwrap_or_default();
@@ -634,7 +758,7 @@ impl State {
         let cell = CellRef {
             map: form.map.trim().to_string(),
             action: form.action.trim().to_string(),
-            slot,
+            kind: slot.kind,
         };
         let action = self.stage(bind_op(&cell, input));
         if action.toast.is_none() {
@@ -849,6 +973,10 @@ impl Default for State {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn game_of(game: &Option<GameLoad>) -> Option<&GameData> {
+    game.as_deref().and_then(|loaded| loaded.as_ref().ok())
 }
 
 fn bind_op(cell: &CellRef, input: String) -> Op {

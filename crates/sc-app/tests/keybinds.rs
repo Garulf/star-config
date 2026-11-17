@@ -3,18 +3,20 @@ mod testkit;
 
 use iced::keyboard::key::{Code, Named, Physical};
 use iced::keyboard::{Key, Location, Modifiers};
-use iced::{Event, Size, event, keyboard, window};
+use iced::{Event, Size, event, keyboard, mouse, window};
 use iced_test::selector::Candidate;
 use iced_test::simulator::Simulator;
 use sc_app::app::{App, Message, Shortcut};
 use sc_app::context::Context;
 use sc_app::screen::{Screen, ToastKind};
 use sc_app::screens::keybinds::{
-    self, CAPTURE_PROMPT, CellRef, EMPTY_BODY, EMPTY_TITLE, RESET_CAPTION, Source, SourceChoice,
-    UNBIND_CAPTION, UNKNOWN_KEY, UNRECOGNISED,
+    self, CAPTURE_PROMPT, CellRef, EMPTY_BODY, EMPTY_TITLE, GAME_DATA_LOADING, NO_GAME_DATA_NOTE,
+    NOT_IN_BUILD, RESET_CAPTION, SHOW_UNLISTED, SlotChoice, Source, SourceChoice, UNBIND_CAPTION,
+    UNKNOWN_KEY, UNRECOGNISED,
 };
 use sc_app::theme;
 use sc_core::actionmaps::{ActionMaps, DeviceKind, Op, Slot};
+use sc_core::defaults::Unavailable;
 use sc_core::process::{FixedProbe, RunState};
 use sc_core::settings::ThemeChoice;
 use sc_core::staging::Document;
@@ -53,9 +55,21 @@ fn open(ctx: Context) -> App {
     app
 }
 
-/// The demo profile in LIVE, with the Keybinds screen open.
+/// The demo profile in LIVE, with the Keybinds screen open. LIVE has no `Data.p4k`, so
+/// the screen shows only the file's binds.
 fn demo(temp: &Path) -> (App, PathBuf) {
     let ctx = testkit::context_with_channels(temp, &["LIVE"]);
+    let path = actionmaps(&ctx);
+    write(&path, DEMO);
+    (open(ctx), path)
+}
+
+/// The demo profile in LIVE with the game's defaults read, with the Keybinds screen open.
+fn demo_with_game(temp: &Path) -> (App, PathBuf) {
+    let ctx = testkit::context_with_channels(temp, &["LIVE"]);
+    let live = ctx.channel.clone().unwrap();
+    testkit::write_build(&live, testkit::LIVE_VERSION, testkit::LIVE_CHANGE);
+    testkit::seed_keybinds_game_data(&ctx);
     let path = actionmaps(&ctx);
     write(&path, DEMO);
     (open(ctx), path)
@@ -65,23 +79,16 @@ fn send(app: &mut App, message: keybinds::Message) {
     feed(app, [Message::Keybinds(message)]);
 }
 
-fn slot(kind: DeviceKind, instance: u32) -> Slot {
-    Slot { kind, instance }
-}
-
-fn cell(map: &str, action: &str, kind: DeviceKind, instance: u32) -> CellRef {
+fn cell(map: &str, action: &str, kind: DeviceKind) -> CellRef {
     CellRef {
         map: map.into(),
         action: action.into(),
-        slot: slot(kind, instance),
+        kind,
     }
 }
 
-fn select(app: &mut App, map: &str, action: &str, kind: DeviceKind, instance: u32) {
-    send(
-        app,
-        keybinds::Message::Select(cell(map, action, kind, instance)),
-    );
+fn select(app: &mut App, map: &str, action: &str, kind: DeviceKind) {
+    send(app, keybinds::Message::Select(cell(map, action, kind)));
 }
 
 fn sim(app: &App) -> Simulator<'_, Message> {
@@ -180,14 +187,14 @@ fn lists_action_maps_with_counts_and_devices_line() {
     let (app, _) = demo(temp.path());
     assert!(has(&app, DEVICES));
     let texts = texts(&app);
-    assert_eq!(following(&texts, "All", 2), ["All", "81"]);
+    assert_eq!(following(&texts, "All", 2), ["All", "68"]);
     assert_eq!(
         following(&texts, "Spaceship movement", 2),
-        ["Spaceship movement", "24"]
+        ["Spaceship movement", "19"]
     );
     assert_eq!(
         following(&texts, "Spaceship weapons", 2),
-        ["Spaceship weapons", "11"]
+        ["Spaceship weapons", "7"]
     );
     for map in [
         "Spaceship targeting",
@@ -200,15 +207,25 @@ fn lists_action_maps_with_counts_and_devices_line() {
 }
 
 #[test]
-fn table_has_a_column_per_device_slot_in_order() {
+fn table_has_a_column_per_device_kind_in_order() {
     let temp = tempfile::tempdir().unwrap();
     let (app, _) = demo(temp.path());
     assert_eq!(
         following(&texts(&app), "Action", 5),
-        ["Action", "Keyboard", "Mouse", "Joystick 1", "Joystick 2"]
+        ["Action", "Keyboard", "Mouse", "Gamepad", "Joystick"]
     );
     assert!(has(&app, "Strafe forward"));
     assert!(has(&app, "v_strafe_forward"));
+}
+
+#[test]
+fn joystick_cells_name_their_stick() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    send(&mut app, keybinds::Message::Search("v_strafe_up".into()));
+    assert!(has(&app, "Button 5"));
+    assert!(has(&app, "js2"));
+    assert!(has(&app, "VKB Gladiator NXT R"));
 }
 
 #[test]
@@ -245,7 +262,6 @@ fn selecting_a_keyboard_cell_starts_capture() {
         "spaceship_movement",
         "v_strafe_forward",
         DeviceKind::Keyboard,
-        1,
     );
     assert!(app.wants_input());
     assert!(has(&app, CAPTURE_PROMPT));
@@ -261,7 +277,6 @@ fn captured_key_with_modifier_stages_a_bind() {
         "spaceship_movement",
         "v_strafe_forward",
         DeviceKind::Keyboard,
-        1,
     );
     assert!(!has(&app, "F"));
     input(
@@ -311,7 +326,6 @@ fn escape_cancels_capture_without_staging() {
         "spaceship_movement",
         "v_strafe_forward",
         DeviceKind::Keyboard,
-        1,
     );
     input(
         &mut app,
@@ -337,7 +351,6 @@ fn typed_input_is_validated_inline() {
         "spaceship_movement",
         "v_strafe_up",
         DeviceKind::Joystick,
-        2,
     );
     send(&mut app, keybinds::Message::Typed("buton5".into()));
     assert!(has(&app, "\"buton5\" is not an input the game knows"));
@@ -360,7 +373,6 @@ fn joystick_cell_offers_quick_picks_and_no_capture() {
         "spaceship_movement",
         "v_pitch",
         DeviceKind::Joystick,
-        1,
     );
     assert!(!app.wants_input());
     assert!(!has(&app, CAPTURE_PROMPT));
@@ -392,7 +404,6 @@ fn reset_to_default_stages_a_reset_and_apply_removes_the_rebind() {
         "spaceship_movement",
         "v_strafe_up",
         DeviceKind::Keyboard,
-        1,
     );
     assert!(has(&app, RESET_CAPTION));
     clicked(&mut app, "Reset to default");
@@ -414,18 +425,18 @@ fn reset_to_default_stages_a_reset_and_apply_removes_the_rebind() {
 }
 
 #[test]
-fn unbind_is_disabled_with_its_caption() {
+fn unbind_and_reset_are_disabled_where_they_would_do_nothing() {
     let temp = tempfile::tempdir().unwrap();
     let (mut app, _) = demo(temp.path());
     select(
         &mut app,
         "spaceship_movement",
         "v_strafe_up",
-        DeviceKind::Keyboard,
-        1,
+        DeviceKind::Gamepad,
     );
     assert!(has(&app, UNBIND_CAPTION));
     assert!(clicks(&app, "Unbind").is_empty());
+    assert!(clicks(&app, "Reset to default").is_empty());
 }
 
 #[test]
@@ -513,7 +524,6 @@ fn apply_changes_only_the_edited_binding_bytes() {
         "spaceship_weapons",
         "v_attack1_group1",
         DeviceKind::Joystick,
-        1,
     );
     send(&mut app, keybinds::Message::Typed("button9".into()));
     clicked(&mut app, "Set");
@@ -533,7 +543,6 @@ fn a_file_changed_on_disk_is_replayed_before_apply() {
         "spaceship_weapons",
         "v_attack1_group1",
         DeviceKind::Joystick,
-        1,
     );
     send(&mut app, keybinds::Message::Typed("button9".into()));
     clicked(&mut app, "Set");
@@ -567,7 +576,6 @@ fn switching_source_with_pending_edits_asks() {
         "spaceship_movement",
         "v_pitch",
         DeviceKind::Joystick,
-        1,
     );
     send(&mut app, keybinds::Message::Typed("button9".into()));
     clicked(&mut app, "Set");
@@ -610,7 +618,6 @@ fn save_as_layout_writes_into_mappings_and_refuses_silent_overwrite() {
         "spaceship_movement",
         "v_afterburner",
         DeviceKind::Joystick,
-        2,
     );
     send(&mut app, keybinds::Message::Typed("button20".into()));
     clicked(&mut app, "Set");
@@ -633,7 +640,6 @@ fn save_as_layout_writes_into_mappings_and_refuses_silent_overwrite() {
         "spaceship_movement",
         "v_strafe_up",
         DeviceKind::Joystick,
-        2,
     );
     send(&mut app, keybinds::Message::Typed("button21".into()));
     clicked(&mut app, "Set");
@@ -662,7 +668,7 @@ fn unrecognised_file_is_read_only() {
     assert!(has_containing(&app, "Line 1"));
     assert!(has(&app, "<Profile name=\"mine\">"));
     assert!(!has_containing(&app, "Add a bind by name"));
-    select(&mut app, "player", "jump", DeviceKind::Keyboard, 1);
+    select(&mut app, "player", "jump", DeviceKind::Keyboard);
     assert!(!app.wants_input());
     feed(&mut app, [Message::Apply]);
     assert_eq!(pending(&app), 0);
@@ -686,7 +692,6 @@ fn shell_shortcuts_do_not_fire_while_capturing() {
         "spaceship_movement",
         "v_pitch",
         DeviceKind::Joystick,
-        1,
     );
     send(&mut app, keybinds::Message::Typed("button9".into()));
     clicked(&mut app, "Set");
@@ -705,7 +710,6 @@ fn shell_shortcuts_do_not_fire_while_capturing() {
         "spaceship_movement",
         "v_strafe_forward",
         DeviceKind::Keyboard,
-        1,
     );
     let routed = route(&app).expect("routed to the screen");
     assert!(matches!(routed, Message::Input(_)));
@@ -717,7 +721,7 @@ fn shell_shortcuts_do_not_fire_while_capturing() {
 #[test]
 fn keybinds_pictures() {
     let temp = tempfile::tempdir().unwrap();
-    let (mut app, _) = demo(temp.path());
+    let (mut app, _) = demo_with_game(temp.path());
     send(
         &mut app,
         keybinds::Message::PickMap(Some("spaceship_weapons".into())),
@@ -725,42 +729,31 @@ fn keybinds_pictures() {
     select(
         &mut app,
         "spaceship_weapons",
-        "v_attack1_group1",
-        DeviceKind::Mouse,
-        1,
+        "v_attack1_group2",
+        DeviceKind::Joystick,
     );
-    send(&mut app, keybinds::Message::Typed("mouse5".into()));
+    send(&mut app, keybinds::Message::Typed("button6".into()));
     clicked(&mut app, "Set");
-    send(&mut app, keybinds::Message::ClosePanel);
-    assert!(has(&app, "Was Left click"));
+    assert!(has(&app, "Was Button 2"));
+    select(
+        &mut app,
+        "spaceship_weapons",
+        "v_attack1_group1",
+        DeviceKind::Joystick,
+    );
+    assert_eq!(pending(&app), 1);
     for (choice, name) in [
         (ThemeChoice::Dark, "keybinds-dark"),
         (ThemeChoice::Light, "keybinds-light"),
     ] {
-        let mut ui = sim(&app);
-        testkit::snapshot(&mut ui, &theme::theme(choice), name);
+        testkit::snapshot(&mut sim(&app), &theme::theme(choice), name);
     }
 
+    let temp = tempfile::tempdir().unwrap();
+    let (app, _) = demo(temp.path());
+    assert!(has_containing(&app, NO_GAME_DATA_NOTE));
     let dark = theme::theme(ThemeChoice::Dark);
-    select(
-        &mut app,
-        "spaceship_weapons",
-        "v_weapon_launch_missile",
-        DeviceKind::Mouse,
-        1,
-    );
-    assert!(has(&app, CAPTURE_PROMPT));
-    testkit::snapshot(&mut sim(&app), &dark, "keybinds-edit-dark");
-
-    select(
-        &mut app,
-        "spaceship_weapons",
-        "v_attack1_group2",
-        DeviceKind::Joystick,
-        1,
-    );
-    assert!(has(&app, "Buttons"));
-    testkit::snapshot(&mut sim(&app), &dark, "keybinds-joystick-dark");
+    testkit::snapshot(&mut sim(&app), &dark, "keybinds-no-game-data-dark");
 }
 
 #[test]
@@ -773,7 +766,6 @@ fn selected_row_scrolls_into_view_above_the_edit_panel() {
         "spaceship_weapons",
         "v_master_mode_cycle",
         DeviceKind::Mouse,
-        1,
     );
     send(&mut app, keybinds::Message::TableResized(240.0));
     assert!(has(&app, "v_weapon_toggle_gimbal_mode"));
@@ -799,7 +791,6 @@ fn a_channel_switch_during_apply_shows_the_new_channel() {
         "spaceship_movement",
         "v_strafe_up",
         DeviceKind::Keyboard,
-        1,
     );
     clicked(&mut app, "Reset to default");
     let applying = app.update(Message::Apply);
@@ -822,7 +813,6 @@ fn a_channel_switch_during_apply_shows_the_new_channel() {
         "spaceship_movement",
         "v_strafe_up",
         DeviceKind::Keyboard,
-        1,
     );
     clicked(&mut app, "Reset to default");
     feed(&mut app, [Message::Apply]);
@@ -830,4 +820,342 @@ fn a_channel_switch_during_apply_shows_the_new_channel() {
     let second = last_toast(&app);
     assert_eq!(second.kind, ToastKind::Success);
     assert_eq!(second.undo_in[0].channel.name, "PTU");
+}
+
+// With the game's defaults ------------------------------------------------------
+
+#[test]
+fn every_listed_action_shows_with_its_game_label() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo_with_game(temp.path());
+    assert!(!has_containing(&app, NO_GAME_DATA_NOTE));
+    assert!(!has(&app, "Add a bind by name"));
+    let texts = texts(&app);
+    for heading in ["GENERAL", "SPACESHIP", "ON FOOT", "GROUND VEHICLES"] {
+        assert!(texts.iter().any(|text| text == heading), "{heading}");
+    }
+    assert_eq!(
+        following(&texts, "Seats and exits", 2),
+        ["Seats and exits", "3"]
+    );
+    assert!(has(&app, "Flight movement"));
+
+    send(
+        &mut app,
+        keybinds::Message::PickMap(Some("seat_general".into())),
+    );
+    assert!(has(&app, "Eject"));
+    assert!(has(&app, "Right Alt"));
+    assert!(has(&app, "Y"));
+    assert!(has(&app, "Leave seat"));
+    assert!(has(&app, "Y button"));
+    assert!(has(&app, "Open or close all doors"));
+
+    send(&mut app, keybinds::Message::PickMap(None));
+    send(
+        &mut app,
+        keybinds::Message::Search("middle mouse button".into()),
+    );
+    assert!(has(&app, "Launch missile"));
+    assert!(!has(&app, "Eject"));
+}
+
+#[test]
+fn edit_panel_shows_the_default_a_reset_returns_to() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo_with_game(temp.path());
+    send(
+        &mut app,
+        keybinds::Message::Search("v_strafe_forward".into()),
+    );
+    assert!(has(&app, "Strafe forward"));
+    assert!(!has_containing(&app, "Was "));
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_forward",
+        DeviceKind::Keyboard,
+    );
+    assert!(has(&app, "Game default"));
+    send(&mut app, keybinds::Message::ClosePanel);
+    send(&mut app, keybinds::Message::Search("decoupled".into()));
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_ifcs_toggle_vector_decoupling",
+        DeviceKind::Keyboard,
+    );
+    assert!(has(&app, "V"), "the default the reset returns to");
+}
+
+#[test]
+fn unlisted_actions_appear_only_with_the_toggle() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo_with_game(temp.path());
+    send(
+        &mut app,
+        keybinds::Message::PickMap(Some("seat_general".into())),
+    );
+    assert!(has(&app, SHOW_UNLISTED));
+    assert!(!has(&app, "Emergency exit"));
+    send(&mut app, keybinds::Message::ShowUnlisted(true));
+    assert!(has(&app, "Emergency exit"));
+    assert!(has(&app, "v_emergency_exit"));
+    send(&mut app, keybinds::Message::ShowUnlisted(false));
+    assert!(!has(&app, "Emergency exit"));
+}
+
+#[test]
+fn unbind_stages_explicit_unbind_and_reset_stages_removal() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = demo_with_game(temp.path());
+    select(&mut app, "seat_general", "v_eject", DeviceKind::Keyboard);
+    assert!(has(&app, UNBIND_CAPTION));
+    assert!(
+        clicks(&app, "Reset to default").is_empty(),
+        "nothing of the user's to reset"
+    );
+    clicked(&mut app, "Unbind");
+    assert_eq!(pending(&app), 1);
+    assert!(has(&app, "Unbound"));
+    assert!(clicks(&app, "Unbind").is_empty(), "already unbound");
+
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Keyboard,
+    );
+    assert!(has(&app, RESET_CAPTION));
+    clicked(&mut app, "Reset to default");
+    assert_eq!(pending(&app), 2);
+    feed(&mut app, [Message::Apply]);
+
+    let unbound = after(
+        DEMO,
+        Op::Unbind {
+            map: "seat_general".into(),
+            action: "v_eject".into(),
+            slot: Slot {
+                kind: DeviceKind::Keyboard,
+                instance: 1,
+            },
+        },
+    );
+    let expected = after(
+        &unbound,
+        Op::Reset {
+            map: "spaceship_movement".into(),
+            action: "v_strafe_up".into(),
+            kind: DeviceKind::Keyboard,
+        },
+    );
+    let written = read(&path);
+    assert_eq!(written, expected);
+    assert!(written.contains("<rebind input=\"kb1_ \"/>"), "{written}");
+}
+
+#[test]
+fn reset_removes_every_rebind_of_the_kind() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_with_channels(temp.path(), &["LIVE"]);
+    let path = actionmaps(&ctx);
+    let two_sticks = replaced_once(
+        DEMO,
+        "<rebind input=\"js1_y\"/>",
+        "<rebind input=\"js1_y\"/>\n    <rebind input=\"js2_ \"/>",
+    );
+    write(&path, &two_sticks);
+    let mut app = open(ctx);
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    assert!(has_containing(&app, "more than one joystick entry"));
+    clicked(&mut app, "Reset to default");
+    feed(&mut app, [Message::Apply]);
+    let written = read(&path);
+    assert!(!written.contains("js1_y"), "{written}");
+    assert!(!written.contains("js2_ "), "{written}");
+}
+
+#[test]
+fn joystick_bind_replaces_the_default_stick() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = demo_with_game(temp.path());
+    send(
+        &mut app,
+        keybinds::Message::PickMap(Some("spaceship_weapons".into())),
+    );
+    select(
+        &mut app,
+        "spaceship_weapons",
+        "v_attack1_group1",
+        DeviceKind::Joystick,
+    );
+    send(&mut app, keybinds::Message::TableResized(150.0));
+    assert!(has(&app, "Stick and input as the game writes it"));
+    assert!(has(&app, "js1"));
+    let js4 = Slot {
+        kind: DeviceKind::Joystick,
+        instance: 4,
+    };
+    send(
+        &mut app,
+        keybinds::Message::PickStick(SlotChoice {
+            slot: js4,
+            label: "Joystick 4".into(),
+        }),
+    );
+    send(&mut app, keybinds::Message::Typed("button9".into()));
+    clicked(&mut app, "Set");
+    assert_eq!(pending(&app), 1);
+    assert!(has(&app, "js4"));
+    assert!(has(&app, "Button 9"));
+    feed(&mut app, [Message::Apply]);
+
+    let written = read(&path);
+    assert_eq!(
+        written,
+        after(
+            DEMO,
+            Op::Bind {
+                map: "spaceship_weapons".into(),
+                action: "v_attack1_group1".into(),
+                input: "js4_button9".into(),
+            },
+        )
+    );
+    let start = written.find("<action name=\"v_attack1_group1\">").unwrap();
+    let end = start + written[start..].find("</action>").unwrap();
+    assert_eq!(written[start..end].matches("input=\"js").count(), 1);
+}
+
+#[test]
+fn mouse_button_in_keyboard_column_is_accepted() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = demo_with_game(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_forward",
+        DeviceKind::Keyboard,
+    );
+    send(&mut app, keybinds::Message::Typed("mouse4".into()));
+    assert!(!has_containing(&app, "is not an input the game knows"));
+    send(&mut app, keybinds::Message::CaptureHover(true));
+    input(
+        &mut app,
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)),
+    );
+    assert_eq!(pending(&app), 1);
+    assert!(has(&app, "Middle mouse button"));
+    feed(&mut app, [Message::Apply]);
+    let expected = after(
+        DEMO,
+        Op::Bind {
+            map: "spaceship_movement".into(),
+            action: "v_strafe_forward".into(),
+            input: "kb1_mouse3".into(),
+        },
+    );
+    assert_eq!(read(&path), expected);
+    assert!(expected.contains("<rebind input=\"kb1_mouse3\"/>"));
+}
+
+#[test]
+fn default_clashes_are_not_flagged() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo_with_game(temp.path());
+    assert_eq!(following(&texts(&app), "Conflicts", 2), ["Conflicts", "1"]);
+    clicked(&mut app, "Conflicts");
+    assert!(has(&app, "Launch missile"));
+    assert!(has(&app, "Unpin all targets"));
+    assert!(!has(&app, "Hail target"));
+    assert!(!has(&app, "Next weapon preset"));
+}
+
+#[test]
+fn user_clash_is_flagged() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo_with_game(temp.path());
+    select(
+        &mut app,
+        "spaceship_targeting",
+        "v_target_reticle_focus",
+        DeviceKind::Keyboard,
+    );
+    send(&mut app, keybinds::Message::Typed("lalt+r".into()));
+    clicked(&mut app, "Set");
+    send(&mut app, keybinds::Message::ClosePanel);
+    assert_eq!(following(&texts(&app), "Conflicts", 2), ["Conflicts", "2"]);
+    clicked(&mut app, "Conflicts");
+    assert!(has(&app, "Focus on target"));
+    assert!(has(&app, "Previous hostile target"));
+    assert!(!has(&app, "Next hostile target"));
+}
+
+#[test]
+fn missing_label_falls_back_to_readable_name() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo_with_game(temp.path());
+    send(&mut app, keybinds::Message::Search("cruise".into()));
+    assert!(has(&app, "Toggle cruise control"));
+    let texts = texts(&app);
+    assert!(
+        !texts
+            .iter()
+            .any(|text| text.contains('@') || text.contains("ui_Kb")),
+        "{texts:?}"
+    );
+}
+
+#[test]
+fn file_only_action_shows_as_not_in_this_game_version() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo_with_game(temp.path());
+    send(
+        &mut app,
+        keybinds::Message::PickMap(Some("spaceship_mining".into())),
+    );
+    assert!(has(&app, "Mining use consumable3"));
+    assert!(has(&app, NOT_IN_BUILD));
+    select(
+        &mut app,
+        "spaceship_mining",
+        "v_mining_use_consumable3",
+        DeviceKind::Keyboard,
+    );
+    send(&mut app, keybinds::Message::Typed("lalt+4".into()));
+    clicked(&mut app, "Set");
+    send(&mut app, keybinds::Message::TableResized(150.0));
+    assert_eq!(pending(&app), 1);
+    assert!(has(&app, NOT_IN_BUILD));
+}
+
+#[test]
+fn without_game_data_the_screen_works_as_before_with_a_note() {
+    let temp = tempfile::tempdir().unwrap();
+    let (app, _) = demo(temp.path());
+    assert!(has_containing(&app, NO_GAME_DATA_NOTE));
+    assert!(has_containing(&app, &Unavailable::NoArchive.message()));
+    assert!(has(&app, "Add a bind by name"));
+    assert!(!has(&app, SHOW_UNLISTED));
+    assert!(has(&app, "Strafe forward"));
+    assert!(has(&app, "W"));
+}
+
+#[test]
+fn game_data_loading_shows_while_it_reads() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_with_channels(temp.path(), &["LIVE"]);
+    write(&actionmaps(&ctx), DEMO);
+    let mut app = App::with(ctx);
+    let task = app.update(Message::Navigate(Screen::Keybinds));
+    assert!(has(&app, GAME_DATA_LOADING));
+    testkit::settle(&mut app, task);
+    assert!(!has(&app, GAME_DATA_LOADING));
+    assert!(has(&app, "Strafe forward"));
 }
