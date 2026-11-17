@@ -882,9 +882,10 @@ fn check_name(name: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn usb_ids_come_from_the_product_guid() {
-        use super::{UsbId, usb_id};
         assert_eq!(
             usb_id(" VKBsim Gladiator EVO L    {0201231D-0000-0000-0000-504944564944}"),
             Some(UsbId {
@@ -920,8 +921,6 @@ mod tests {
         assert_eq!(usb_id("Controller (Gamepad)"), None);
         assert_eq!(usb_id("odd {0201231D}"), None);
     }
-
-    use super::*;
     use crate::error::Error;
     use crate::staging::Document;
     use std::fs;
