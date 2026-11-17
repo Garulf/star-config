@@ -1,3 +1,7 @@
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod evdev_map;
+#[cfg(target_os = "linux")]
+mod linux;
 mod listener;
 mod session;
 
@@ -56,8 +60,10 @@ impl Backend for Box<dyn Backend + Send> {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 struct NoDevices;
 
+#[cfg(not(target_os = "linux"))]
 impl Backend for NoDevices {
     fn devices(&self) -> &[DeviceInfo] {
         &[]
@@ -72,6 +78,12 @@ impl Backend for NoDevices {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub fn open(class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
+    Session::new(Box::new(linux::open(class)))
+}
+
+#[cfg(not(target_os = "linux"))]
 pub fn open(_class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
     Session::new(Box::new(NoDevices))
 }
