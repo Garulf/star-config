@@ -27,8 +27,8 @@ lets you pick a channel, and gives each kind of file its own screen.
 | Screen | What you can do there |
 |---|---|
 | Overview | See the state of the install at a glance: StarStrings, binds, shader caches, last snapshot, what needs attention. |
-| Config | Edit `user.cfg` and the game's own settings. Console variables star-config knows get a proper control for their type. Lines it does not know are kept as they are and can still be edited as text. |
-| Keybinds | See every bind in `actionmaps.xml` by device, rebind by pressing the key or button, add a bind by action name, spot conflicts, swap joystick numbers, and edit exported layouts. |
+| Config | Edit `user.cfg`, and every setting in the game's own menu under the menu's names and groups. Console variables star-config knows get a proper control for their type. Lines it does not know are kept as they are and can still be edited as text. |
+| Keybinds | See every action the game has, with its in-game name and default bind beside yours, rebind by pressing the key or button, unbind, add a bind by action name, spot conflicts, swap joystick numbers, and edit exported layouts. Advanced controls covers inversion, exponents, response curves and deadzones per device. |
 | Head tracking and comms | Change the game's own head tracking, VoIP and FOIP settings in `attributes.xml`. star-config does no tracking itself. |
 | StarStrings | Install, update and remove [StarStrings](https://github.com/MrKraken/StarStrings), and see when a game patch means it needs reinstalling. |
 | Screenshots | Browse captures from every channel by day, favourite, rename and archive them, and copy one to the clipboard at full size or shrunk to fit a chat upload limit. |
@@ -131,14 +131,17 @@ Exported keybind layouts are the one exception, since the game only reads those 
 - Lines, comments and settings that star-config does not understand are written back untouched.
 - Swapping channels is journaled. If it is interrupted, the next start offers to finish or undo it.
 - Deleted screenshots go to the system trash.
+- `Data.p4k` is only ever read. Action names, default binds and the list of game settings come
+  from your own copy, read once after each patch and cached per build. Nothing from the game
+  ships with star-config. If it cannot be read, Keybinds and Config show only what your files
+  hold until you press `Try again`.
 
 Snapshots live under `~/.local/share/star-config` on Linux and `%APPDATA%\star-config` on
 Windows. The Backups screen lists them and can prune old ones.
 
 ### What 0.1 does not do
 
-- It does not read the default binds from `Data.p4k`. The Keybinds screen shows the binds
-  stored in your files, which are the ones you have changed, and lets you add others by action name.
+- The Advanced controls axis table only edits deadzone and saturation lines your file already has.
 - `Save as layout` copies an existing exported layout. It cannot yet turn your live profile into a new layout file. Export from the game first.
 - No import or export of a whole setup as one file.
 - The list of known `user.cfg` variables is short (40 for now). Anything else in your file still shows up and stays editable as text.

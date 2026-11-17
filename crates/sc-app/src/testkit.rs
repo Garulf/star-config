@@ -934,6 +934,26 @@ pub fn seed_keybinds_game_data(ctx: &Context) {
     }
 }
 
+/// Game data for the README pictures: the keybinds fixture's controls and key names, and the
+/// settings fixture's defaults, with both fixtures' strings.
+pub fn seed_demo_game_data(ctx: &Context) {
+    let strings = [
+        include_str!("../tests/fixtures/game_data/global.ini"),
+        include_str!("../tests/fixtures/keybinds/game/global.ini").trim_start_matches('\u{feff}'),
+    ]
+    .join("\n");
+    let sources = sc_core::defaults::Sources {
+        strings,
+        ..keybinds_game_sources()
+    };
+    for channel in ctx.channels.iter().filter(|c| c.build_id().is_some()) {
+        if sc_core::install::resolve_ci(&channel.dir, "Data.p4k").is_none() {
+            fs::write(channel.dir.join("Data.p4k"), b"placeholder").unwrap();
+        }
+        sc_core::defaults::seed_cache(channel, &ctx.dirs.game_data(), &sources).unwrap();
+    }
+}
+
 // Shader caches ------------------------------------------------------------------
 
 pub fn shader_cache_dir(temp: &Path) -> PathBuf {

@@ -152,7 +152,9 @@ fn show_plan(app: &mut App) {
 }
 
 fn demo_app(temp: &Path) -> App {
-    let mut app = App::with(testkit::demo_story(temp));
+    let ctx = testkit::demo_story(temp);
+    testkit::seed_demo_game_data(&ctx);
+    let mut app = App::with(ctx);
     open(&mut app, Screen::Overview);
     app
 }
