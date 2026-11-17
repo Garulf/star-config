@@ -17,6 +17,7 @@ use sc_app::theme;
 use sc_core::actionmaps::DeviceKind;
 use sc_core::channels::{CopyPlan, PlannedFile};
 use sc_core::settings::ThemeChoice;
+use sc_input::DeviceInfo;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -78,6 +79,10 @@ fn stage(app: &mut App, screen: Screen, temp: &Path) {
                     Message::Keybinds(keybinds::Message::Typed("mouse5".into())),
                     Message::Keybinds(keybinds::Message::Set),
                     cell("v_weapon_launch_missile", DeviceKind::Joystick),
+                    Message::Keybinds(keybinds::Message::Devices {
+                        found: vec![vkb("L", 0x0200), vkb("R", 0x0201)],
+                        unreadable: 0,
+                    }),
                 ],
             );
         }
@@ -112,6 +117,14 @@ fn stage(app: &mut App, screen: Screen, temp: &Path) {
         }
         Screen::Channels => show_plan(app),
         _ => {}
+    }
+}
+
+fn vkb(side: &str, product: u16) -> DeviceInfo {
+    DeviceInfo {
+        vendor: 0x231D,
+        product,
+        name: format!("VKB Gladiator NXT {side}"),
     }
 }
 
