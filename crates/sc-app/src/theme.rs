@@ -967,9 +967,11 @@ pub mod binds {
     pub const CAPTURE_HEIGHT: f32 = 72.0;
     pub const QUICK_PICK_WIDTH: f32 = 40.0;
     pub const EDIT_SIDE_WIDTH: f32 = 320.0;
-    pub const ACTION_PORTION: u16 = 4;
-    pub const DEVICE_PORTION: u16 = 2;
-    pub const WIDE_DEVICE_PORTION: u16 = 3;
+    pub const ACTION_PORTION: u16 = 14;
+    pub const KEYBOARD_PORTION: u16 = 9;
+    pub const MOUSE_PORTION: u16 = 4;
+    pub const GAMEPAD_PORTION: u16 = 8;
+    pub const JOYSTICK_PORTION: u16 = 12;
 }
 
 /// The Advanced controls view of the keybinds screen.

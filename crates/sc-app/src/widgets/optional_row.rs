@@ -3,7 +3,7 @@ use super::icon::icon_toned;
 use super::typography::{hint, label};
 use crate::icons;
 use crate::theme::{self, Tone, layout, size, space};
-use iced::widget::{Column, Space, button, container, row, text, tooltip};
+use iced::widget::{Column, Row, Space, button, container, row, text, tooltip};
 use iced::{Alignment, Element, Length, Padding};
 
 const ROW_PADDING: Padding = Padding {
@@ -98,7 +98,8 @@ fn remove_button<'a, M: Clone + 'a>(remove: M) -> Element<'a, M> {
 }
 
 fn labels<'a, M: 'a>(row_data: &OptionalRow<'a, M>) -> Column<'a, M> {
-    let mut title = row![label(row_data.label)]
+    let mut title = Row::new()
+        .push(label(row_data.label).wrapping(text::Wrapping::Word))
         .spacing(space::SM)
         .align_y(Alignment::Center);
     if let Some(name) = row_data.name.filter(|name| *name != row_data.label) {
@@ -106,9 +107,11 @@ fn labels<'a, M: 'a>(row_data: &OptionalRow<'a, M>) -> Column<'a, M> {
             text(name)
                 .size(size::CAPTION)
                 .font(theme::FONT_MONO)
-                .style(theme::caption),
+                .style(theme::caption)
+                .wrapping(text::Wrapping::WordOrGlyph),
         );
     }
+    let title = title.wrap().vertical_spacing(space::XS / 2.0);
     let mut labels = Column::new().push(title).spacing(space::XS / 2.0);
     if let Some(hint_text) = row_data.hint {
         labels = labels.push(hint(hint_text));

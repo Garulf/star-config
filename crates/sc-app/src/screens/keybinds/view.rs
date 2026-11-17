@@ -61,12 +61,15 @@ fn action_width() -> Length {
     Length::FillPortion(binds::ACTION_PORTION)
 }
 
-/// The game's mouse names and the stick's name need more room than keys and pad buttons.
+/// Keyboard combos with a long modifier and stick buttons with their product line need the most
+/// room. Mouse binds are rare in real files.
 fn device_width(kind: DeviceKind) -> Length {
-    match kind {
-        DeviceKind::Mouse | DeviceKind::Joystick => Length::FillPortion(binds::WIDE_DEVICE_PORTION),
-        DeviceKind::Keyboard | DeviceKind::Gamepad => Length::FillPortion(binds::DEVICE_PORTION),
-    }
+    Length::FillPortion(match kind {
+        DeviceKind::Keyboard => binds::KEYBOARD_PORTION,
+        DeviceKind::Mouse => binds::MOUSE_PORTION,
+        DeviceKind::Gamepad => binds::GAMEPAD_PORTION,
+        DeviceKind::Joystick => binds::JOYSTICK_PORTION,
+    })
 }
 
 fn several_entries(kind: DeviceKind) -> String {
@@ -561,7 +564,7 @@ fn map_item<'a>(
         row![
             label(name)
                 .width(Length::Fill)
-                .wrapping(text::Wrapping::None),
+                .wrapping(text::Wrapping::Word),
             hint(count.to_string()),
         ]
         .spacing(space::SM)

@@ -974,9 +974,9 @@ fn device_item<'a>(
     note: Option<&'a str>,
     selected: bool,
 ) -> Element<'a, Message> {
-    let mut names = column![label(entry.label.as_str()).wrapping(text::Wrapping::None)];
+    let mut names = column![label(entry.label.as_str()).wrapping(text::Wrapping::Word)];
     if let Some(second) = entry.product.as_deref().or(note) {
-        names = names.push(hint(second).wrapping(text::Wrapping::None));
+        names = names.push(hint(second).wrapping(text::Wrapping::Word));
     }
     let mut line = row![names.width(Length::Fill)]
         .spacing(space::SM)
