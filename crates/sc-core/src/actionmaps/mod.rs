@@ -1,5 +1,9 @@
 //! actionmaps.xml parsing and editing.
 
+mod options;
+
+pub use options::{AxisField, AxisOption, DeviceOptions, GroupField, GroupOptions, GroupSetting};
+
 use crate::error::{Error, Result};
 use crate::staging::Document;
 use crate::xml_edit::{self, Attr, Element, Scan, line_at};
@@ -96,6 +100,47 @@ pub enum Op {
         a: u32,
         b: u32,
     },
+    /// Sets one field of an option group, creating the `options` slot and the group element as needed.
+    SetGroup {
+        kind: DeviceKind,
+        instance: u32,
+        group: String,
+        field: GroupField,
+        value: String,
+    },
+    /// Removes the field, and the group element when that leaves it empty.
+    ResetGroup {
+        kind: DeviceKind,
+        instance: u32,
+        group: String,
+        field: GroupField,
+    },
+    /// Replaces the group's response curve with these `(in, out)` points, in the order given.
+    SetCurve {
+        kind: DeviceKind,
+        instance: u32,
+        group: String,
+        points: Vec<(String, String)>,
+    },
+    /// Removes the group's response curve, and the group element when that leaves it empty.
+    ResetCurve {
+        kind: DeviceKind,
+        instance: u32,
+        group: String,
+    },
+    /// Sets the value on every line of the device that carries it, or adds the line.
+    SetAxis {
+        product: String,
+        input: String,
+        field: AxisField,
+        value: String,
+    },
+    /// Removes the value from every line that carries it, and each line and device left empty.
+    ResetAxis {
+        product: String,
+        input: String,
+        field: AxisField,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +153,8 @@ pub struct ActionMaps {
     devices: Vec<Device>,
     maps: Vec<String>,
     bindings: Vec<Binding>,
+    device_options: Vec<DeviceOptions>,
+    group_options: Vec<GroupOptions>,
 }
 
 impl ActionMaps {
@@ -143,6 +190,16 @@ impl ActionMaps {
             .filter(|b| b.map == map && b.action == action)
             .filter(|b| b.slot.is_some_and(|slot| slot.kind == kind))
             .collect()
+    }
+
+    /// Per-axis deadzone, saturation and acceleration, one entry per `deviceoptions` product.
+    pub fn device_options(&self) -> &[DeviceOptions] {
+        &self.device_options
+    }
+
+    /// Per-slot option group overrides, one entry per `options` element.
+    pub fn group_options(&self) -> &[GroupOptions] {
+        &self.group_options
     }
 
     pub fn conflicts(&self) -> Vec<Conflict> {
@@ -186,6 +243,8 @@ impl ActionMaps {
         }
         Ok(Self {
             kind: tree.kind,
+            device_options: options::read_device_options(&tree),
+            group_options: options::read_group_options(&tree),
             path,
             bom,
             text,
@@ -198,11 +257,83 @@ impl ActionMaps {
 
     fn edited(&self, op: &Op) -> Result<String> {
         let mut text = self.text.clone();
+        let path = &self.path;
         match op {
-            Op::Bind { map, action, input } => bind(&self.path, &mut text, map, action, input)?,
-            Op::Unbind { map, action, slot } => unbind(&self.path, &mut text, map, action, *slot)?,
-            Op::Reset { map, action, kind } => reset(&self.path, &mut text, map, action, *kind)?,
-            Op::SwapJoysticks { a, b } => swap_joysticks(&self.path, &mut text, *a, *b)?,
+            Op::Bind { map, action, input } => bind(path, &mut text, map, action, input)?,
+            Op::Unbind { map, action, slot } => unbind(path, &mut text, map, action, *slot)?,
+            Op::Reset { map, action, kind } => reset(path, &mut text, map, action, *kind)?,
+            Op::SwapJoysticks { a, b } => swap_joysticks(path, &mut text, *a, *b)?,
+            Op::SetGroup {
+                kind,
+                instance,
+                group,
+                field,
+                value,
+            } => options::set_group(
+                path,
+                &mut text,
+                Slot {
+                    kind: *kind,
+                    instance: *instance,
+                },
+                group,
+                *field,
+                value,
+            )?,
+            Op::ResetGroup {
+                kind,
+                instance,
+                group,
+                field,
+            } => options::reset_group(
+                path,
+                &mut text,
+                Slot {
+                    kind: *kind,
+                    instance: *instance,
+                },
+                group,
+                *field,
+            )?,
+            Op::SetCurve {
+                kind,
+                instance,
+                group,
+                points,
+            } => options::set_curve(
+                path,
+                &mut text,
+                Slot {
+                    kind: *kind,
+                    instance: *instance,
+                },
+                group,
+                points,
+            )?,
+            Op::ResetCurve {
+                kind,
+                instance,
+                group,
+            } => options::reset_curve(
+                path,
+                &mut text,
+                Slot {
+                    kind: *kind,
+                    instance: *instance,
+                },
+                group,
+            )?,
+            Op::SetAxis {
+                product,
+                input,
+                field,
+                value,
+            } => options::set_axis(path, &mut text, product, input, *field, value)?,
+            Op::ResetAxis {
+                product,
+                input,
+                field,
+            } => options::reset_axis(path, &mut text, product, input, *field)?,
         }
         Ok(text)
     }
