@@ -47,9 +47,17 @@ pub fn stick_for(ids: &[(u32, UsbId)], picked: u32, device: &DeviceInfo) -> (u32
     }
 }
 
+/// One reading of sticks or gamepads. Each listen gets its own, so axes rest where they
+/// are when listening starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DeviceSession {
+    pub class: DeviceClass,
+    pub generation: u64,
+}
+
 /// Reads sticks or gamepads until the subscription is dropped.
-pub fn device_stream(class: &DeviceClass) -> impl Stream<Item = Message> + use<> {
-    let class = *class;
+pub fn device_stream(session: &DeviceSession) -> impl Stream<Item = Message> + use<> {
+    let class = session.class;
     iced::stream::channel(1, async move |sender: Sender<Message>| {
         let _ = std::thread::Builder::new()
             .name("device-listener".into())

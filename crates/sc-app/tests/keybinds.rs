@@ -10,11 +10,11 @@ use sc_app::app::{App, Message, Shortcut};
 use sc_app::context::Context;
 use sc_app::screen::{Screen, ToastKind};
 use sc_app::screens::keybinds::{
-    self, ADVANCED_TAB, AdvancedMessage, BINDS_TAB, CAPTURE_PROMPT, CellRef, DevicePick,
-    EMPTY_BODY, EMPTY_TITLE, GAME_DATA_LOADING, GAME_DEFAULT, NO_GAME_DATA_NOTE, NOT_A_NUMBER,
-    NOT_CONNECTED, NOT_IN_BUILD, OptionField, PAD_PROMPT, POINT_RANGE, PointPart, RESET_CAPTION,
-    SHOW_UNLISTED, STICK_PROMPT, SlotChoice, Source, SourceChoice, TRY_AGAIN, UNBIND_CAPTION,
-    UNKNOWN_KEY, UNRECOGNISED,
+    self, ADVANCED_TAB, AdvancedMessage, BINDS_TAB, CellRef, DevicePick, EMPTY_BODY, EMPTY_TITLE,
+    GAME_DATA_LOADING, GAME_DEFAULT, KEY_PROMPT, MOUSE_PROMPT, NO_GAME_DATA_NOTE, NOT_A_NUMBER,
+    NOT_CONNECTED, NOT_IN_BUILD, OptionField, PAD_PROMPT, PICK_WITHOUT_DEVICE, POINT_RANGE,
+    PointPart, RESET_CAPTION, SHOW_UNLISTED, STICK_PROMPT, SlotChoice, Source, SourceChoice,
+    TRY_AGAIN, UNBIND_CAPTION, UNKNOWN_KEY, UNRECOGNISED,
 };
 use sc_app::theme;
 use sc_core::actionmaps::{ActionMaps, AxisField, DeviceKind, GroupField, Op, Slot};
@@ -267,8 +267,18 @@ fn selecting_a_keyboard_cell_starts_capture() {
         DeviceKind::Keyboard,
     );
     assert!(app.wants_input());
-    assert!(has(&app, CAPTURE_PROMPT));
+    assert!(has(&app, KEY_PROMPT));
     assert!(has(&app, "v_strafe_forward in Spaceship movement"));
+
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_forward",
+        DeviceKind::Mouse,
+    );
+    assert!(app.wants_input());
+    assert!(has(&app, MOUSE_PROMPT));
+    assert!(!has(&app, KEY_PROMPT));
 }
 
 #[test]
@@ -342,7 +352,7 @@ fn escape_cancels_capture_without_staging() {
     assert_eq!(pending(&app), 0);
     assert!(!app.wants_input());
     assert!(has(&app, "Listen again"));
-    assert!(!has(&app, CAPTURE_PROMPT));
+    assert!(!has(&app, KEY_PROMPT));
 }
 
 #[test]
@@ -368,7 +378,7 @@ fn typed_input_is_validated_inline() {
 }
 
 #[test]
-fn joystick_cell_offers_quick_picks_and_no_capture() {
+fn joystick_picks_sit_behind_a_toggle() {
     let temp = tempfile::tempdir().unwrap();
     let (mut app, _) = demo(temp.path());
     select(
@@ -379,8 +389,10 @@ fn joystick_cell_offers_quick_picks_and_no_capture() {
     );
     assert!(!app.wants_input());
     assert_eq!(app.listens_to(), Some(DeviceClass::Stick));
-    assert!(!has(&app, CAPTURE_PROMPT));
+    assert!(!has(&app, KEY_PROMPT));
     assert!(has(&app, STICK_PROMPT));
+    assert!(!has(&app, "Buttons"));
+    clicked(&mut app, PICK_WITHOUT_DEVICE);
     for pick in [
         "Buttons",
         "1",
@@ -2116,4 +2128,229 @@ fn closing_the_panel_stops_device_listening() {
     );
     assert_eq!(app.listens_to(), None);
     assert!(app.wants_input());
+}
+
+fn vkb_l() -> DeviceInfo {
+    DeviceInfo {
+        vendor: 0x231D,
+        product: 0x0200,
+        name: "VKB Gladiator NXT L".into(),
+    }
+}
+
+fn devices(app: &mut App, found: Vec<DeviceInfo>, unreadable: usize) {
+    send(app, keybinds::Message::Devices { found, unreadable });
+}
+
+fn hold_left_alt(app: &mut App) {
+    input(
+        app,
+        key(
+            Code::AltLeft,
+            Key::Named(Named::Alt),
+            Location::Left,
+            Modifiers::ALT,
+        ),
+    );
+}
+
+#[test]
+fn keyboard_box_shows_held_modifiers() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_forward",
+        DeviceKind::Keyboard,
+    );
+    assert!(!has(&app, "L Alt"));
+    hold_left_alt(&mut app);
+    assert!(has(&app, "L Alt"));
+    assert!(has(&app, KEY_PROMPT));
+    assert!(app.wants_input());
+    assert_eq!(pending(&app), 0);
+}
+
+#[test]
+fn stick_box_names_the_devices_it_hears() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, vec![vkb_l(), vkb_r()], 0);
+    assert!(has_containing(
+        &app,
+        "Listening to: VKB Gladiator NXT L, VKB Gladiator NXT R"
+    ));
+    assert!(has_containing(
+        &app,
+        "Or move an axis or push a hat. Esc stops."
+    ));
+}
+
+#[test]
+fn no_sticks_opens_the_picks() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, vec![vkb_r()], 0);
+    assert!(!has(&app, "32"));
+    clicked(&mut app, PICK_WITHOUT_DEVICE);
+    assert!(has(&app, "32"));
+
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, Vec::new(), 0);
+    assert!(has_containing(
+        &app,
+        "No sticks found. Plug one in and choose Listen again, or pick below."
+    ));
+    assert!(has(&app, "32"));
+    assert!(has(&app, "Listen again"));
+}
+
+#[test]
+fn no_gamepads_say_so() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Gamepad,
+    );
+    assert!(has_containing(
+        &app,
+        "Or move a stick or pull a trigger. Esc stops."
+    ));
+    devices(&mut app, Vec::new(), 0);
+    assert!(has_containing(
+        &app,
+        "No gamepads found. Plug one in and choose Listen again, or pick below."
+    ));
+}
+
+#[test]
+fn unreadable_sticks_are_named_as_such() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, Vec::new(), 2);
+    assert!(has_containing(&app, "Found 2 that this app cannot read"));
+    assert!(has_containing(&app, "/dev/input"));
+    assert!(!has_containing(&app, "No sticks found"));
+}
+
+#[test]
+fn gamepad_picks_stage_a_bind() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Gamepad,
+    );
+    devices(&mut app, Vec::new(), 0);
+    assert_eq!(count(&app, "L trigger"), 1);
+    assert!(has(&app, "L stick X"));
+    clicked(&mut app, "L shoulder");
+    clicked(&mut app, "Set");
+    assert_eq!(pending(&app), 1);
+    applied_bind(&mut app, &path, "v_strafe_up", "gp1_shoulderl");
+}
+
+#[test]
+fn every_listen_opens_a_fresh_device_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    assert_eq!(app.device_session(), None);
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    let first = app.device_session().expect("listening");
+    assert_eq!(first.class, DeviceClass::Stick);
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_strafe_up",
+        DeviceKind::Joystick,
+    );
+    let second = app.device_session().expect("listening");
+    assert_eq!(second.class, DeviceClass::Stick);
+    assert_ne!(first, second);
+
+    send(&mut app, keybinds::Message::Listen);
+    let third = app.device_session().expect("listening");
+    assert_ne!(second, third);
+
+    input(&mut app, escape());
+    assert_eq!(app.device_session(), None);
+    clicked(&mut app, "Listen again");
+    let fourth = app.device_session().expect("listening");
+    assert_ne!(third, fourth);
+}
+
+#[test]
+fn capture_box_pictures() {
+    let dark = theme::theme(ThemeChoice::Dark);
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo_with_game(temp.path());
+    send(
+        &mut app,
+        keybinds::Message::PickMap(Some("spaceship_weapons".into())),
+    );
+    select(
+        &mut app,
+        "spaceship_weapons",
+        "v_weapon_launch_missile",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, vec![vkb_l(), vkb_r()], 0);
+    testkit::snapshot(&mut sim(&app), &dark, "keybinds-stick-listening");
+
+    heard(&mut app, vkb_l(), "button4");
+    assert_eq!(pending(&app), 1);
+    testkit::snapshot(&mut sim(&app), &dark, "keybinds-stick-heard");
+
+    select(
+        &mut app,
+        "spaceship_weapons",
+        "v_attack1_group1",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, Vec::new(), 0);
+    testkit::snapshot(&mut sim(&app), &dark, "keybinds-stick-none");
+
+    select(
+        &mut app,
+        "spaceship_weapons",
+        "v_attack1_group1",
+        DeviceKind::Keyboard,
+    );
+    hold_left_alt(&mut app);
+    assert!(app.wants_input());
+    testkit::snapshot(&mut sim(&app), &dark, "keybinds-keyboard-held");
 }

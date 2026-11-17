@@ -12,7 +12,7 @@ pub use advanced::{
     NOT_CONNECTED, OptionField, POINT_RANGE, PointPart,
 };
 pub use capture::stops_listening;
-pub use devices::device_stream;
+pub use devices::{DeviceSession, device_stream};
 pub use model::CellRef;
 pub use source::{CURRENT_LABEL, Source, SourceChoice, UNRECOGNISED, layout_name};
 
@@ -48,9 +48,11 @@ pub const NOT_IN_BUILD: &str = "Not in this game version";
 pub const NO_GAME_DATA_NOTE: &str =
     "Game data unavailable: showing only the binds stored in your files.";
 pub const ADD_CAPTION: &str = "For actions that have no bind in this file yet. Use the action's name as the game writes it, for example v_toggle_mining_mode.";
-pub const CAPTURE_PROMPT: &str = "Press a key or a mouse button";
+pub const KEY_PROMPT: &str = "Press a key";
+pub const MOUSE_PROMPT: &str = "Press a mouse button here";
 pub const STICK_PROMPT: &str = "Press a button on your stick";
 pub const PAD_PROMPT: &str = "Press a button on your gamepad";
+pub const PICK_WITHOUT_DEVICE: &str = "Pick without the device";
 pub const UNKNOWN_KEY: &str = "This key has no known name. Type it below.";
 pub const CHANGED_AGAIN: &str = CHANGED_ON_DISK;
 pub const EMPTY_TITLE: &str = "No keybinds yet";
@@ -104,6 +106,8 @@ struct Edit {
     devices: Option<(Vec<DeviceInfo>, usize)>,
     /// What the last device press was and where it went.
     heard: Option<String>,
+    /// The inputs to click instead of pressing, for a stick or gamepad cell.
+    picks_open: bool,
 }
 
 impl Edit {
@@ -118,6 +122,7 @@ impl Edit {
             capture: Capture::default(),
             devices: None,
             heard: None,
+            picks_open: false,
         }
     }
 
@@ -197,6 +202,8 @@ pub struct State {
     saving: bool,
     tab: Tab,
     advanced: advanced::Advanced,
+    /// Counts each start of listening, so every listen reads devices afresh.
+    listen_generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -227,6 +234,7 @@ pub enum Message {
     Heard(Heard),
     CaptureHover(bool),
     Listen,
+    TogglePicks,
     Typed(String),
     QuickPick(String),
     PickStick(SlotChoice),
@@ -276,6 +284,7 @@ impl State {
             saving: false,
             tab: Tab::Binds,
             advanced: advanced::Advanced::new(),
+            listen_generation: 0,
         }
     }
 
@@ -370,6 +379,14 @@ impl State {
             DeviceKind::Gamepad => Some(DeviceClass::Gamepad),
             DeviceKind::Keyboard | DeviceKind::Mouse => None,
         }
+    }
+
+    /// The device reading a listening stick or gamepad cell wants, new for each listen.
+    pub fn device_session(&self) -> Option<DeviceSession> {
+        self.listens_to().map(|class| DeviceSession {
+            class,
+            generation: self.listen_generation,
+        })
     }
 
     fn listening_edit(&self) -> Option<&Edit> {
@@ -474,6 +491,7 @@ impl State {
                 if self.listens_to().is_some()
                     && let Panel::Edit(edit) = &mut self.panel
                 {
+                    edit.picks_open |= found.is_empty();
                     edit.devices = Some((found, unreadable));
                 }
                 Action::none()
@@ -482,6 +500,7 @@ impl State {
             Message::Listen => {
                 if let Panel::Edit(edit) = &mut self.panel {
                     edit.listen();
+                    self.listen_generation = self.listen_generation.wrapping_add(1);
                 }
                 Action::none()
             }
@@ -524,6 +543,7 @@ impl State {
     fn edit_form(&mut self, message: Message) {
         match (&mut self.panel, message) {
             (Panel::Edit(edit), Message::CaptureHover(hovered)) => edit.hovered = hovered,
+            (Panel::Edit(edit), Message::TogglePicks) => edit.picks_open = !edit.picks_open,
             (Panel::Edit(edit), Message::Typed(typed) | Message::QuickPick(typed)) => {
                 edit.typed = typed;
             }
@@ -723,8 +743,10 @@ impl State {
             _ => None,
         };
         let mut edit = Edit::new(cell, slot, typed);
+        edit.picks_open = reading.as_ref().is_some_and(|(found, _)| found.is_empty());
         edit.devices = reading;
         self.panel = Panel::Edit(edit);
+        self.listen_generation = self.listen_generation.wrapping_add(1);
     }
 
     fn input(&mut self, event: &iced::Event) -> Action<Message> {

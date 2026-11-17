@@ -897,8 +897,15 @@ impl App {
 
     /// The sticks or gamepads the Keybinds screen is reading, while nothing covers it.
     pub fn listens_to(&self) -> Option<DeviceClass> {
+        self.device_session().map(|session| session.class)
+    }
+
+    /// The device reading the Keybinds screen wants, while nothing covers it.
+    pub fn device_session(&self) -> Option<keybinds::DeviceSession> {
         let shown = self.dialog.is_none() && self.screen == Screen::Keybinds;
-        shown.then(|| self.screens.keybinds.listens_to()).flatten()
+        shown
+            .then(|| self.screens.keybinds.device_session())
+            .flatten()
     }
 
     /// Where the event subscription sends keyboard and mouse events right now.
@@ -917,9 +924,9 @@ impl App {
             time::every(PROBE_EVERY).map(|_| Message::ProbeTick),
             event::listen_with(self.event_handler()),
         ];
-        if let Some(class) = self.listens_to() {
+        if let Some(session) = self.device_session() {
             subscriptions.push(
-                Subscription::run_with(class, keybinds::device_stream).map(Message::Keybinds),
+                Subscription::run_with(session, keybinds::device_stream).map(Message::Keybinds),
             );
         }
         if self.toasts.iter().any(Toast::expires) {

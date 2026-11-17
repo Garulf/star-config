@@ -24,4 +24,6 @@ icons! {
     SEARCH => "search",
     INFO => "info",
     PLUS => "plus",
+    CHEVRON_RIGHT => "chevron-right",
+    CHEVRON_DOWN => "chevron-down",
 }

@@ -1,19 +1,21 @@
+use super::capture;
 use super::inputs::{
-    AXES, Known, Typed, judge, kind_label, quick_buttons, quick_hats, quick_label, slot_label,
-    stick_label,
+    AXES, Known, Typed, gamepad_label, gamepad_picks, judge, kind_label, quick_buttons, quick_hats,
+    quick_label, slot_label, stick_label,
 };
 use super::model::{Cell, CellRef, Line, MapEntry, Model, Row as BindRow};
 use super::source::{Failure, UNRECOGNISED};
 use super::{
-    ADD_CAPTION, AddForm, CAPTURE_PROMPT, Doc, EMPTY_BODY, EMPTY_TITLE, Edit, GAME_DATA_LOADING,
-    Message, NOT_IN_BUILD, PAD_PROMPT, RESET_CAPTION, SHOW_UNLISTED, STICK_PROMPT, SaveForm, State,
-    SwapForm, TRY_AGAIN, Tab, UNBIND_CAPTION, add_input,
+    ADD_CAPTION, AddForm, Doc, EMPTY_BODY, EMPTY_TITLE, Edit, GAME_DATA_LOADING, KEY_PROMPT,
+    MOUSE_PROMPT, Message, NOT_IN_BUILD, PAD_PROMPT, PICK_WITHOUT_DEVICE, RESET_CAPTION,
+    SHOW_UNLISTED, STICK_PROMPT, SaveForm, State, SwapForm, TRY_AGAIN, Tab, UNBIND_CAPTION,
+    add_input,
 };
 use crate::icons;
 use crate::screen::{Screen, ToastKind};
 use crate::theme::{self, ButtonKind, FONT_MONO, FONT_SEMIBOLD, Tone, binds, layout, size, space};
 use crate::widgets::{
-    banner, button, change_marker, checkbox, divider, empty_state, heading, hint, icon_only,
+    banner, button, change_marker, checkbox, divider, empty_state, heading, hint, icon, icon_only,
     icon_toned, key_cap, label, muted, page_fixed, pick_list, search_field, table_header, tag,
     text_field, virtual_list, virtual_list_with_id,
 };
@@ -24,6 +26,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Length, Padding};
 use sc_core::actionmaps::{DeviceKind, layout_file_name};
 use sc_core::binds::{KINDS, Origin};
+use sc_input::DeviceInfo;
 
 pub(super) const ROW_HEIGHT: f32 = layout::ROW_MIN_HEIGHT;
 pub(super) const TABLE_ID: &str = "keybinds-table";
@@ -56,6 +59,9 @@ const CHIP_PADDING: Padding = Padding {
 const NO_MATCH: &str = "No binds match. Clear the search or pick another action map.";
 const PICK_A_CELL: &str = "Choose a cell to change its bind.";
 const UNBOUND: &str = "Unbound";
+const COMBINATION: &str = "Hold Alt, Ctrl or Shift for a combination. Escape stops listening.";
+const STICK_MOVES: &str = "Or move an axis or push a hat. Esc stops.";
+const PAD_MOVES: &str = "Or move a stick or pull a trigger. Esc stops.";
 
 fn action_width() -> Length {
     Length::FillPortion(binds::ACTION_PORTION)
@@ -786,13 +792,18 @@ impl State {
         ]
         .spacing(space::LG)
         .align_y(Alignment::Center);
-        let main = if edit.cell.kind == DeviceKind::Joystick {
-            column![capture_box(edit), quick_picks()]
-                .spacing(space::MD)
-                .into()
-        } else {
-            capture_box(edit)
+        let mut main = column![capture_box(edit)].spacing(space::SM);
+        let picks: Option<fn() -> Element<'a, Message>> = match edit.cell.kind {
+            DeviceKind::Joystick => Some(stick_picks),
+            DeviceKind::Gamepad => Some(pad_picks),
+            DeviceKind::Keyboard | DeviceKind::Mouse => None,
         };
+        if let Some(picks) = picks {
+            main = main.push(picks_toggle(edit.picks_open));
+            if edit.picks_open {
+                main = main.push(picks());
+            }
+        }
         column![
             title,
             row![
@@ -910,52 +921,131 @@ fn current_bind(cell: Option<&Cell>, with_default: bool) -> Element<'_, Message>
     content.into()
 }
 
-/// What the capture box asks for while it listens, and how to stop.
+/// What the capture box asks for while it listens, and the line under it.
 fn prompt(kind: DeviceKind) -> (&'static str, &'static str) {
     match kind {
-        DeviceKind::Joystick => (
-            STICK_PROMPT,
-            "Or move an axis or push a hat. Escape stops listening.",
-        ),
-        DeviceKind::Gamepad => (PAD_PROMPT, "Escape stops listening."),
-        DeviceKind::Keyboard | DeviceKind::Mouse => (
-            CAPTURE_PROMPT,
-            "Hold Alt, Ctrl or Shift for a combination. Escape stops listening.",
-        ),
+        DeviceKind::Keyboard => (KEY_PROMPT, COMBINATION),
+        DeviceKind::Mouse => (MOUSE_PROMPT, COMBINATION),
+        DeviceKind::Joystick => (STICK_PROMPT, STICK_MOVES),
+        DeviceKind::Gamepad => (PAD_PROMPT, PAD_MOVES),
     }
 }
 
-fn capture_box<'a>(edit: &'a Edit) -> Element<'a, Message> {
-    let body: Element<'a, Message> = if edit.listening {
-        let (asks, stops) = prompt(edit.cell.kind);
-        column![
-            text(asks).size(size::LABEL).font(FONT_SEMIBOLD),
-            hint(stops),
-        ]
-        .spacing(space::XS)
-        .align_x(Alignment::Center)
-        .into()
+/// What the device reader found, in words, and whether anything is being read.
+fn reading(kind: DeviceKind, (found, unreadable): &(Vec<DeviceInfo>, usize)) -> (String, bool) {
+    if !found.is_empty() {
+        let names: Vec<&str> = found.iter().map(|device| device.name.as_str()).collect();
+        return (format!("Listening to: {}", names.join(", ")), true);
+    }
+    if *unreadable > 0 {
+        return (
+            format!(
+                "Found {unreadable} that this app cannot read. Check that your user can read /dev/input."
+            ),
+            false,
+        );
+    }
+    let devices = if kind == DeviceKind::Gamepad {
+        "gamepads"
     } else {
-        row![
-            muted("Not listening"),
-            button("Listen again", ButtonKind::Secondary, Some(Message::Listen)),
-        ]
-        .spacing(space::MD)
-        .align_y(Alignment::Center)
-        .into()
+        "sticks"
+    };
+    (
+        format!("No {devices} found. Plug one in and choose Listen again, or pick below."),
+        false,
+    )
+}
+
+fn listen_again<'a>() -> Element<'a, Message> {
+    button("Listen again", ButtonKind::Secondary, Some(Message::Listen))
+}
+
+/// A line of what happened, centred above the Listen again button.
+fn listen_again_after<'a>(line: impl text::IntoFragment<'a>) -> Element<'a, Message> {
+    column![
+        text(line)
+            .size(size::CAPTION)
+            .width(Length::Fill)
+            .align_x(Alignment::Center),
+        listen_again(),
+    ]
+    .spacing(space::SM)
+    .align_x(Alignment::Center)
+    .into()
+}
+
+/// The modifiers held so far as key caps, each followed by a plus, then what comes next.
+fn held_caps<'a>(kind: DeviceKind, held: &[&'static str]) -> Element<'a, Message> {
+    let next = if kind == DeviceKind::Mouse {
+        "then a mouse button. Esc stops."
+    } else {
+        "then a key. Esc stops."
+    };
+    let mut caps = Row::new().spacing(space::XS).align_y(Alignment::Center);
+    for &name in held {
+        caps = caps
+            .push(key_cap(capture::label_of(name).unwrap_or(name)))
+            .push(hint("+"));
+    }
+    caps.push(hint(next)).into()
+}
+
+/// The prompt, then how else to answer it or the modifiers held so far, then which devices
+/// are being read.
+fn listening<'a>(edit: &'a Edit, reading: Option<String>) -> Element<'a, Message> {
+    let (asks, how) = prompt(edit.cell.kind);
+    let held = edit.capture.held();
+    let second: Element<'a, Message> = if held.is_empty() {
+        hint(how)
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
+            .into()
+    } else {
+        held_caps(edit.cell.kind, held)
+    };
+    let mut lines = column![text(asks).size(size::LABEL).font(FONT_SEMIBOLD), second]
+        .spacing(space::XS)
+        .align_x(Alignment::Center);
+    if let Some(line) = reading {
+        lines = lines.push(hint(line).width(Length::Fill).align_x(Alignment::Center));
+    }
+    lines.into()
+}
+
+fn capture_box<'a>(edit: &'a Edit) -> Element<'a, Message> {
+    let found = edit
+        .devices
+        .as_ref()
+        .map(|devices| reading(edit.cell.kind, devices));
+    let (body, active): (Element<'a, Message>, bool) = match (edit.listening, found) {
+        (false, _) => match &edit.heard {
+            Some(heard) => (listen_again_after(heard.as_str()), false),
+            None => (
+                row![muted("Not listening"), listen_again()]
+                    .spacing(space::MD)
+                    .align_y(Alignment::Center)
+                    .into(),
+                false,
+            ),
+        },
+        (true, Some((line, false))) => (listen_again_after(line), false),
+        (true, found) => (listening(edit, found.map(|(line, _)| line)), true),
     };
     let area = mouse_area(
         container(body)
+            .padding(Padding {
+                top: 0.0,
+                right: space::MD,
+                bottom: 0.0,
+                left: space::MD,
+            })
             .center_x(Length::Fill)
             .center_y(binds::CAPTURE_HEIGHT)
-            .style(theme::capture_box(edit.listening)),
+            .style(theme::capture_box(active)),
     )
     .on_enter(Message::CaptureHover(true))
     .on_exit(Message::CaptureHover(false));
     let mut content = column![area].spacing(space::SM);
-    if let Some(heard) = &edit.heard {
-        content = content.push(text(heard).size(size::CAPTION));
-    }
     if let Some(note) = &edit.note {
         content = content.push(
             text(note)
@@ -966,8 +1056,34 @@ fn capture_box<'a>(edit: &'a Edit) -> Element<'a, Message> {
     content.into()
 }
 
-fn chip<'a>(name: String, fixed: bool) -> Element<'a, Message> {
-    let caption = text(quick_label(&name)).size(size::CAPTION);
+/// Flush with the box above, so the chevron lines up with its edge.
+fn picks_toggle<'a>(open: bool) -> Element<'a, Message> {
+    let chevron = if open {
+        icons::CHEVRON_DOWN
+    } else {
+        icons::CHEVRON_RIGHT
+    };
+    widget::button(
+        row![
+            icon(chevron, layout::ICON),
+            text(PICK_WITHOUT_DEVICE).size(size::BODY),
+        ]
+        .spacing(space::XS)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding {
+        top: space::XS,
+        right: space::SM,
+        bottom: space::XS,
+        left: 0.0,
+    })
+    .style(theme::ghost)
+    .on_press(Message::TogglePicks)
+    .into()
+}
+
+fn chip<'a>(label: String, name: String, fixed: bool) -> Element<'a, Message> {
+    let caption = text(label).size(size::CAPTION);
     let face = if fixed {
         caption.width(Length::Fill).align_x(Alignment::Center)
     } else {
@@ -984,28 +1100,42 @@ fn chip<'a>(name: String, fixed: bool) -> Element<'a, Message> {
     }
 }
 
-fn quick_picks<'a>() -> Element<'a, Message> {
-    let buttons = Row::with_children(quick_buttons().into_iter().map(|name| chip(name, true)))
+fn quick_chip<'a>(name: String, fixed: bool) -> Element<'a, Message> {
+    chip(quick_label(&name), name, fixed)
+}
+
+fn chips<'a>(chips: impl IntoIterator<Item = Element<'a, Message>>) -> Element<'a, Message> {
+    Row::with_children(chips)
         .spacing(space::XS)
         .wrap()
-        .vertical_spacing(space::XS);
+        .vertical_spacing(space::XS)
+        .into()
+}
+
+fn stick_picks<'a>() -> Element<'a, Message> {
+    let buttons = quick_buttons()
+        .into_iter()
+        .map(|name| quick_chip(name, true));
     let others = AXES
         .iter()
         .map(|axis| axis.to_string())
         .chain(quick_hats())
-        .map(|name| chip(name, false));
-    let others = Row::with_children(others)
-        .spacing(space::XS)
-        .wrap()
-        .vertical_spacing(space::XS);
+        .map(|name| quick_chip(name, false));
     column![
         heading("Buttons"),
-        buttons,
+        chips(buttons),
         heading("Axes and hat 1"),
-        others
+        chips(others),
     ]
     .spacing(space::SM)
     .into()
+}
+
+fn pad_picks<'a>() -> Element<'a, Message> {
+    let picks = gamepad_picks()
+        .into_iter()
+        .map(|name| chip(gamepad_label(name).to_string(), name.to_string(), false));
+    chips(picks)
 }
 
 fn placeholder(kind: DeviceKind) -> &'static str {
