@@ -7,6 +7,10 @@ use crate::xml_edit::{self, Element, line_at};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
+mod loader;
+
+pub use loader::{ATTRIBUTES, KEY_NAMES, PROFILE, Unavailable, from_archive, load, strings_entry};
+
 const ACTION_PREFIXES: [&str; 2] = ["v_", "pc_"];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,6 +75,18 @@ pub struct OptionGroup {
     pub curve: Vec<(f64, f64)>,
 }
 
+/// How much a build's defaults hold. `labels_found` of `label_keys` action labels resolve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Counts {
+    pub maps: usize,
+    pub actions: usize,
+    pub settings: usize,
+    pub option_trees: usize,
+    pub groups: usize,
+    pub label_keys: usize,
+    pub labels_found: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Sources {
     pub profile: String,
@@ -90,6 +106,27 @@ impl GameData {
             option_trees,
             strings: Strings::parse(&sources.strings),
         })
+    }
+
+    pub fn counts(&self) -> Counts {
+        let actions = || self.maps.iter().flat_map(|map| &map.actions);
+        let keys: Vec<&str> = actions()
+            .filter_map(|action| action.label.as_deref())
+            .collect();
+        let found = |key: &&str| {
+            self.strings
+                .get(key)
+                .is_some_and(|text| !text.trim().is_empty())
+        };
+        Counts {
+            maps: self.maps.len(),
+            actions: actions().count(),
+            settings: self.settings.len(),
+            option_trees: self.option_trees.len(),
+            groups: self.option_trees.iter().map(|tree| tree.groups.len()).sum(),
+            label_keys: keys.len(),
+            labels_found: keys.into_iter().filter(found).count(),
+        }
     }
 
     pub fn label(&self, key: Option<&str>, fallback: &str) -> String {
