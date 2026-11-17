@@ -24,7 +24,8 @@ impl Listener {
                     max,
                 } => {
                     let rest = *self.rest.entry((device, name)).or_insert(*value);
-                    let past_threshold = (value - rest).abs() * 2 > max - min;
+                    let past_threshold = (i64::from(*value) - i64::from(rest)).abs() * 2
+                        > i64::from(*max) - i64::from(*min);
                     if past_threshold && moved.is_none() {
                         moved = Some((*name).to_string());
                     }
@@ -97,5 +98,14 @@ mod tests {
         assert_eq!(l.feed(0, &[axis("x", 0, 0, 100)]), None);
         assert_eq!(l.feed(1, &[axis("x", 100, 0, 100)]), None);
         assert_eq!(l.feed(1, &[axis("x", 0, 0, 100)]), Some("x".into()));
+    }
+
+    #[test]
+    fn full_i32_range_does_not_overflow() {
+        let mut l = Listener::new();
+        let (min, max) = (i32::MIN, i32::MAX);
+        assert_eq!(l.feed(0, &[axis("x", min, min, max)]), None);
+        assert_eq!(l.feed(0, &[axis("x", -1, min, max)]), None);
+        assert_eq!(l.feed(0, &[axis("x", max, min, max)]), Some("x".into()));
     }
 }
