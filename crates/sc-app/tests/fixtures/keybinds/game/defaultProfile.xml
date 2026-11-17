@@ -2,8 +2,50 @@
  <platforms>
   <PC keyboard="1" mouse="1" gamepad="1" joystick="1"/>
  </platforms>
+ <optiontree type="keyboard" name="root" UIShowInvert="-1" UIShowSensitivity="-1" UISensitivityMin="0.01" UISensitivityMax="6.25">
+  <optiongroup name="master" UILabel="@ui_KbOptMaster" UIShowSensitivity="0" UIShowInvert="0" UIShowCurve="0">
+   <optiongroup name="mouse_curves" UILabel="@ui_KbOptMouseCurves" UIShowCurve="-1" UIShowSensitivity="0" UIShowInvert="0">
+    <optiongroup name="flight" UILabel="@ui_KbOptFlight" UIShowSensitivity="0" UIShowInvert="-1" UIShowCurve="-1">
+     <optiongroup name="flight_move_pitch" UILabel="@ui_KbOptPitch" UIShowCurve="1" UIShowInvert="1"/>
+     <optiongroup name="flight_move_yaw" UILabel="@ui_KbOptYaw" UIShowCurve="1" UIShowInvert="1"/>
+     <optiongroup name="flight_view_pitch" invert_cvar="cl_invertMouse" UILabel="@ui_KbOptLookPitch" UIShowCurve="1" UIShowInvert="1"/>
+    </optiongroup>
+    <optiongroup name="aiming" UILabel="@ui_KbOptAiming" UIShowCurve="-1" UIShowSensitivity="0" UIShowInvert="-1">
+     <optiongroup name="weapon_convergence_distance_rel" UILabel="@ui_KbOptConvergence" invert="1" UIShowCurve="0" UIShowInvert="1"/>
+    </optiongroup>
+   </optiongroup>
+  </optiongroup>
+ </optiontree>
+ <optiontree type="gamepad" name="root" UIShowInvert="1" UIShowSensitivity="1" UISensitivityMin="0.01" UISensitivityMax="2.0">
+  <optiongroup name="master" UILabel="@ui_KbOptMaster" UIShowSensitivity="1" UIShowCurve="0" UIShowInvert="0">
+   <optiongroup name="fps_view" UILabel="@ui_KbOptFootLook" exponent="1.5" UIShowCurve="1" UIShowInvert="-1">
+    <nonlinearity_curve>
+     <point in="0.2" out="0.05"/>
+     <point in="0.5" out="0.3"/>
+     <point in="0.8" out="0.7"/>
+    </nonlinearity_curve>
+    <optiongroup name="fps_view_pitch" invert_cvar="cl_invertController" UILabel="@ui_KbOptLookPitch" UIShowCurve="1" UIShowInvert="1"/>
+    <optiongroup name="fps_view_yaw" UILabel="@ui_KbOptLookYaw" UIShowCurve="1" UIShowInvert="1"/>
+   </optiongroup>
+   <optiongroup name="flight_view" UILabel="@ui_KbOptFreeLook" exponent="2" UIShowCurve="1" UIShowInvert="-1">
+    <nonlinearity_curve reset="1"/>
+   </optiongroup>
+  </optiongroup>
+ </optiontree>
  <optiontree type="joystick" instances="8" name="root" UISensitivityMin="0.01" UISensitivityMax="2.0">
-  <optiongroup name="master" UILabel="@ui_KbOptMaster" UIShowCurve="0" UIShowInvert="0"/>
+  <optiongroup name="master" UILabel="@ui_KbOptMaster" UIShowCurve="0" UIShowInvert="0">
+   <optiongroup name="flight_move" UILabel="@ui_KbOptFlightMoveMissing" UIShowCurve="-1" UIShowInvert="-1">
+    <optiongroup name="flight_move_pitch" UILabel="@ui_KbOptPitch" UIShowCurve="1" UIShowInvert="1"/>
+    <optiongroup name="flight_move_yaw" UILabel="@ui_KbOptYaw" UIShowCurve="1" UIShowInvert="1"/>
+    <optiongroup name="flight_move_roll" UILabel="@ui_KbOptRoll" UIShowCurve="1" UIShowInvert="1"/>
+    <optiongroup name="flight_move_space_brake" UILabel="@ui_KbOptBrake" UIShowCurve="1" UIShowInvert="1"/>
+   </optiongroup>
+   <optiongroup name="flight_view" UILabel="@ui_KbOptFreeLook" exponent="2.5" UIShowCurve="1" UIShowInvert="-1">
+    <nonlinearity_curve reset="1"/>
+    <optiongroup name="flight_view_pitch" UILabel="@ui_KbOptFreeLookPitch" UIShowCurve="1" UIShowInvert="1"/>
+    <optiongroup name="flight_view_yaw" UILabel="@ui_KbOptFreeLookYaw" UIShowCurve="1" UIShowInvert="1"/>
+   </optiongroup>
+  </optiongroup>
  </optiontree>
  <actionmap name="seat_general" version="1" UILabel="@ui_KbMapSeats" UICategory="@ui_KbCatGeneral">
   <action name="v_eject" activationMode="delayed_press" keyboard="ralt+y" joystick=" " UILabel="@ui_KbEject" UIDescription="@ui_KbEjectDesc"/>

@@ -6,8 +6,8 @@ use super::model::{Cell, CellRef, Line, MapEntry, Model, Row as BindRow};
 use super::source::{Failure, UNRECOGNISED};
 use super::{
     ADD_CAPTION, AddForm, CAPTURE_PROMPT, Doc, EMPTY_BODY, EMPTY_TITLE, Edit, GAME_DATA_LOADING,
-    Message, NOT_IN_BUILD, RESET_CAPTION, SHOW_UNLISTED, SaveForm, State, SwapForm, UNBIND_CAPTION,
-    add_input,
+    Message, NOT_IN_BUILD, RESET_CAPTION, SHOW_UNLISTED, SaveForm, State, SwapForm, Tab,
+    UNBIND_CAPTION, add_input,
 };
 use crate::icons;
 use crate::screen::{Screen, ToastKind};
@@ -87,7 +87,10 @@ impl State {
                 empty_state(EMPTY_TITLE, EMPTY_BODY, None),
             ),
             (Doc::Failed(failure), _) => page_fixed(title, None, Vec::new(), self.failed(failure)),
-            (Doc::Ready { .. } | Doc::Away, Some(model)) => self.main(model),
+            (Doc::Ready { .. } | Doc::Away, Some(model)) => match self.tab {
+                Tab::Binds => self.main(model),
+                Tab::Advanced => self.advanced_page(model),
+            },
             _ => {
                 let note = if self.game_loading {
                     GAME_DATA_LOADING
@@ -140,7 +143,7 @@ impl State {
         )
     }
 
-    fn source_pick(&self) -> Element<'_, Message> {
+    pub(super) fn source_pick(&self) -> Element<'_, Message> {
         let selected = self
             .sources
             .iter()
@@ -153,7 +156,7 @@ impl State {
 
     fn toolbar<'a>(&'a self, model: &'a Model) -> Element<'a, Message> {
         let writable = self.writable();
-        let mut bar = row![self.source_pick()]
+        let mut bar = row![self.tabs(), self.source_pick()]
             .spacing(space::SM)
             .align_y(Alignment::Center);
         if self.source.as_ref().is_some_and(super::Source::is_layout) {

@@ -1,3 +1,4 @@
+mod advanced;
 mod capture;
 mod inputs;
 mod model;
@@ -5,6 +6,10 @@ mod source;
 mod view;
 
 pub use crate::screens::words::GAME_DATA_LOADING;
+pub use advanced::{
+    ADVANCED_TAB, AdvancedMessage, BINDS_TAB, DevicePick, GAME_DEFAULT, NOT_A_NUMBER,
+    NOT_CONNECTED, OptionField, POINT_RANGE, PointPart,
+};
 pub use model::CellRef;
 pub use source::{CURRENT_LABEL, Source, SourceChoice, UNRECOGNISED, layout_name};
 
@@ -57,6 +62,13 @@ impl fmt::Display for SlotChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.label)
     }
+}
+
+/// The two views of the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Binds,
+    Advanced,
 }
 
 enum Doc {
@@ -128,6 +140,8 @@ pub struct State {
     list: VirtualListState,
     raw_list: VirtualListState,
     saving: bool,
+    tab: Tab,
+    advanced: advanced::Advanced,
 }
 
 #[derive(Debug, Clone)]
@@ -171,6 +185,8 @@ pub enum Message {
     SaveLayout(bool),
     LayoutSaved(Origin, String, Result<SnapshotId, WriteFailure>),
     Applied(Origin, Handoff, Result<SnapshotId, WriteFailure>),
+    ShowTab(Tab),
+    Advanced(AdvancedMessage),
 }
 
 impl State {
@@ -194,6 +210,8 @@ impl State {
             list: VirtualListState::default(),
             raw_list: VirtualListState::default(),
             saving: false,
+            tab: Tab::Binds,
+            advanced: advanced::Advanced::new(),
         }
     }
 
@@ -349,6 +367,11 @@ impl State {
                 self.layout_saved(origin, name, result, ctx)
             }
             Message::Applied(origin, handoff, result) => self.applied(origin, handoff, result),
+            Message::ShowTab(tab) => {
+                self.show_tab(tab);
+                Action::none()
+            }
+            Message::Advanced(message) => self.advanced_update(message),
             other => {
                 self.edit_form(other);
                 Action::none()
@@ -425,6 +448,7 @@ impl State {
         } else if !matches!(self.doc, Doc::Away) {
             self.model = None;
         }
+        self.rebuild_advanced();
         if let (Some(model), Some(map)) = (&self.model, &self.map)
             && !model.maps.iter().any(|entry| &entry.name == map)
         {

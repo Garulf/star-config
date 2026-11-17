@@ -10,12 +10,13 @@ use sc_app::app::{App, Message, Shortcut};
 use sc_app::context::Context;
 use sc_app::screen::{Screen, ToastKind};
 use sc_app::screens::keybinds::{
-    self, CAPTURE_PROMPT, CellRef, EMPTY_BODY, EMPTY_TITLE, GAME_DATA_LOADING, NO_GAME_DATA_NOTE,
-    NOT_IN_BUILD, RESET_CAPTION, SHOW_UNLISTED, SlotChoice, Source, SourceChoice, UNBIND_CAPTION,
-    UNKNOWN_KEY, UNRECOGNISED,
+    self, ADVANCED_TAB, AdvancedMessage, BINDS_TAB, CAPTURE_PROMPT, CellRef, DevicePick,
+    EMPTY_BODY, EMPTY_TITLE, GAME_DATA_LOADING, GAME_DEFAULT, NO_GAME_DATA_NOTE, NOT_A_NUMBER,
+    NOT_CONNECTED, NOT_IN_BUILD, OptionField, POINT_RANGE, PointPart, RESET_CAPTION, SHOW_UNLISTED,
+    SlotChoice, Source, SourceChoice, UNBIND_CAPTION, UNKNOWN_KEY, UNRECOGNISED,
 };
 use sc_app::theme;
-use sc_core::actionmaps::{ActionMaps, DeviceKind, Op, Slot};
+use sc_core::actionmaps::{ActionMaps, AxisField, DeviceKind, GroupField, Op, Slot};
 use sc_core::defaults::Unavailable;
 use sc_core::process::{FixedProbe, RunState};
 use sc_core::settings::ThemeChoice;
@@ -1158,4 +1159,510 @@ fn game_data_loading_shows_while_it_reads() {
     testkit::settle(&mut app, task);
     assert!(!has(&app, GAME_DATA_LOADING));
     assert!(has(&app, "Strafe forward"));
+}
+
+// Advanced controls ---------------------------------------------------------------
+
+const ADVANCED: &str = include_str!("fixtures/keybinds/advanced.xml");
+const STICK_L: &str = "VKB Gladiator NXT L  {0200231D-0000-0000-0000-504944564944}";
+const X52: &str = "X52 H.O.T.A.S.  {075C06A3-0000-0000-0000-504944564944}";
+
+/// The advanced controls demo profile in LIVE, with the Advanced controls view open.
+fn advanced_demo(temp: &Path, with_game: bool) -> (App, PathBuf) {
+    let ctx = testkit::context_with_channels(temp, &["LIVE"]);
+    if with_game {
+        let live = ctx.channel.clone().unwrap();
+        testkit::write_build(&live, testkit::LIVE_VERSION, testkit::LIVE_CHANGE);
+        testkit::seed_keybinds_game_data(&ctx);
+    }
+    let path = actionmaps(&ctx);
+    write(&path, ADVANCED);
+    let mut app = open(ctx);
+    clicked(&mut app, ADVANCED_TAB);
+    (app, path)
+}
+
+fn adv(app: &mut App, message: AdvancedMessage) {
+    send(app, keybinds::Message::Advanced(message));
+}
+
+fn pick_device(app: &mut App, device: DevicePick) {
+    adv(app, AdvancedMessage::Pick(device));
+}
+
+fn group_field(group: &str, field: GroupField) -> OptionField {
+    OptionField::Group {
+        group: group.into(),
+        field,
+    }
+}
+
+fn axis_field(product: &str, input: &str, field: AxisField) -> OptionField {
+    OptionField::Axis {
+        product: product.into(),
+        input: input.into(),
+        field,
+    }
+}
+
+/// What each text field shows: its value, or its placeholder when empty.
+fn field_texts(app: &App) -> Vec<String> {
+    let mut ui = sim(app);
+    let mut found = Vec::new();
+    let _ = ui.find(|candidate: Candidate<'_>| {
+        if let Candidate::TextInput { state, .. } = candidate {
+            found.push(state.text().to_string());
+        }
+        None::<()>
+    });
+    found
+}
+
+fn count(app: &App, text: &str) -> usize {
+    texts(app).iter().filter(|found| *found == text).count()
+}
+
+fn applied(app: &mut App, path: &Path) -> String {
+    feed(app, [Message::Apply]);
+    assert_eq!(pending(app), 0);
+    read(path)
+}
+
+fn curve_of(text: &str, kind: DeviceKind, instance: u32, group: &str) -> Vec<(String, String)> {
+    let doc = ActionMaps::parse(Path::new("actionmaps.xml"), text.as_bytes()).unwrap();
+    doc.group_options()
+        .iter()
+        .find(|slot| slot.kind == kind && slot.instance == instance)
+        .and_then(|slot| slot.groups.iter().find(|g| g.group == group))
+        .and_then(|g| g.curve.clone())
+        .unwrap_or_default()
+}
+
+fn points(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect()
+}
+
+#[test]
+fn groups_show_only_flagged_controls() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    for label in [
+        "All devices",
+        "Flight move",
+        "Pitch",
+        "Space brake",
+        "Free look",
+    ] {
+        assert!(has(&app, label), "{label}");
+    }
+    assert_eq!(count(&app, "Invert"), 6);
+    assert_eq!(count(&app, "Response curve"), 7);
+    assert_eq!(count(&app, "Exponent"), 7);
+    assert_eq!(count(&app, "Sensitivity"), 0);
+
+    pick_device(&mut app, DevicePick::Gamepad);
+    assert_eq!(count(&app, "Sensitivity"), 1);
+    assert_eq!(count(&app, "Invert"), 2);
+    assert_eq!(count(&app, "Response curve"), 4);
+
+    pick_device(&mut app, DevicePick::KeyboardMouse);
+    assert!(has(&app, "Mouse response"));
+    assert_eq!(count(&app, "Invert"), 4);
+    assert_eq!(count(&app, "Response curve"), 3);
+    assert!(!texts(&app).iter().any(|t| t.contains('@')));
+}
+
+#[test]
+fn values_come_from_the_file_then_the_default() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Gamepad);
+    let fields = field_texts(&app);
+    assert!(fields.contains(&"1".to_string()), "{fields:?}");
+    assert!(fields.contains(&"1.5".to_string()), "{fields:?}");
+    assert!(has(&app, "Game default: 2"));
+    assert!(has(&app, GAME_DEFAULT));
+}
+
+#[test]
+fn set_exponent_stages_set_group() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    let field = group_field("flight_move_yaw", GroupField::Exponent);
+    adv(
+        &mut app,
+        AdvancedMessage::Typed(field.clone(), "1.5".into()),
+    );
+    assert_eq!(pending(&app), 0);
+    adv(&mut app, AdvancedMessage::Submit(field));
+    assert_eq!(pending(&app), 1);
+    assert!(has(&app, "Was 2"));
+    let expected = after(
+        ADVANCED,
+        Op::SetGroup {
+            kind: DeviceKind::Joystick,
+            instance: 1,
+            group: "flight_move_yaw".into(),
+            field: GroupField::Exponent,
+            value: "1.5".into(),
+        },
+    );
+    assert_eq!(applied(&mut app, &path), expected);
+    assert_eq!(
+        expected,
+        replaced_once(
+            ADVANCED,
+            "<flight_move_yaw exponent=\"2\"/>",
+            "<flight_move_yaw exponent=\"1.5\"/>"
+        )
+    );
+}
+
+#[test]
+fn a_bad_number_is_not_staged() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    let field = group_field("flight_move_yaw", GroupField::Exponent);
+    adv(
+        &mut app,
+        AdvancedMessage::Typed(field.clone(), "fast".into()),
+    );
+    adv(&mut app, AdvancedMessage::Submit(field));
+    assert_eq!(pending(&app), 0);
+    assert!(has(&app, NOT_A_NUMBER));
+}
+
+#[test]
+fn invert_toggle_stages_set_group() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    adv(
+        &mut app,
+        AdvancedMessage::Invert("flight_move_roll".into(), true),
+    );
+    assert_eq!(pending(&app), 1);
+    let expected = after(
+        ADVANCED,
+        Op::SetGroup {
+            kind: DeviceKind::Joystick,
+            instance: 1,
+            group: "flight_move_roll".into(),
+            field: GroupField::Invert,
+            value: "1".into(),
+        },
+    );
+    assert_eq!(applied(&mut app, &path), expected);
+}
+
+#[test]
+fn sensitivity_slider_stages_on_release_within_the_tree_range() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Gamepad);
+    let field = group_field("master", GroupField::Sensitivity);
+    adv(&mut app, AdvancedMessage::Slide(field.clone(), 1.2));
+    adv(&mut app, AdvancedMessage::Slide(field.clone(), 1.25));
+    assert_eq!(pending(&app), 0);
+    adv(&mut app, AdvancedMessage::Release);
+    assert_eq!(pending(&app), 1);
+    adv(&mut app, AdvancedMessage::Slide(field, 9.0));
+    adv(&mut app, AdvancedMessage::Release);
+    let expected = after(
+        &after(
+            ADVANCED,
+            Op::SetGroup {
+                kind: DeviceKind::Gamepad,
+                instance: 1,
+                group: "master".into(),
+                field: GroupField::Sensitivity,
+                value: "1.25".into(),
+            },
+        ),
+        Op::SetGroup {
+            kind: DeviceKind::Gamepad,
+            instance: 1,
+            group: "master".into(),
+            field: GroupField::Sensitivity,
+            value: "2".into(),
+        },
+    );
+    assert_eq!(applied(&mut app, &path), expected);
+}
+
+#[test]
+fn reset_removes_the_value() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(2));
+    adv(
+        &mut app,
+        AdvancedMessage::Reset(group_field("flight_move_space_brake", GroupField::Invert)),
+    );
+    assert_eq!(pending(&app), 1);
+    let text = applied(&mut app, &path);
+    assert_eq!(
+        text,
+        after(
+            ADVANCED,
+            Op::ResetGroup {
+                kind: DeviceKind::Joystick,
+                instance: 2,
+                group: "flight_move_space_brake".into(),
+                field: GroupField::Invert,
+            }
+        )
+    );
+    assert!(!text.contains("flight_move_space_brake"));
+}
+
+#[test]
+fn reset_does_nothing_where_the_file_holds_no_value() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    adv(
+        &mut app,
+        AdvancedMessage::Reset(group_field("flight_move_roll", GroupField::Invert)),
+    );
+    assert_eq!(pending(&app), 0);
+}
+
+#[test]
+fn axis_edit_updates_both_copies() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    assert!(has(&app, "X axis"));
+    let field = axis_field(STICK_L, "x", AxisField::Saturation);
+    adv(&mut app, AdvancedMessage::Slide(field, 0.95));
+    adv(&mut app, AdvancedMessage::Release);
+    assert_eq!(pending(&app), 1);
+    let line = "<option input=\"x\" saturation=\"0.89099997\"/>";
+    assert_eq!(ADVANCED.matches(line).count(), 2);
+    assert_eq!(
+        applied(&mut app, &path),
+        ADVANCED.replace(line, "<option input=\"x\" saturation=\"0.95\"/>")
+    );
+}
+
+#[test]
+fn acceleration_is_a_number_field_and_reset_clears_an_axis_value() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    let field = axis_field(STICK_L, "rotz", AxisField::Acceleration);
+    adv(
+        &mut app,
+        AdvancedMessage::Typed(field.clone(), "0.5".into()),
+    );
+    adv(&mut app, AdvancedMessage::Submit(field));
+    adv(
+        &mut app,
+        AdvancedMessage::Reset(axis_field(STICK_L, "rotz", AxisField::Deadzone)),
+    );
+    assert_eq!(pending(&app), 2);
+    assert_eq!(
+        applied(&mut app, &path),
+        replaced_once(
+            ADVANCED,
+            "<option input=\"rotz\" deadzone=\"0.05\"/>",
+            "<option input=\"rotz\" acceleration=\"0.5\"/>"
+        )
+    );
+}
+
+#[test]
+fn curve_points_stage_in_order() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    adv(
+        &mut app,
+        AdvancedMessage::OpenCurve("flight_move_pitch".into()),
+    );
+    assert!(has(&app, "Add point"));
+    adv(&mut app, AdvancedMessage::AddPoint);
+    assert_eq!(pending(&app), 1);
+    adv(
+        &mut app,
+        AdvancedMessage::PointTyped(0, PointPart::In, "0.9".into()),
+    );
+    adv(&mut app, AdvancedMessage::SubmitPoints);
+    assert_eq!(pending(&app), 2);
+    adv(&mut app, AdvancedMessage::RemovePoint(1));
+    assert_eq!(pending(&app), 3);
+    let text = applied(&mut app, &path);
+    assert_eq!(
+        curve_of(&text, DeviceKind::Joystick, 1, "flight_move_pitch"),
+        points(&[("0.25", "0.1"), ("0.75", "0.6"), ("0.9", "0.05")])
+    );
+}
+
+#[test]
+fn a_point_outside_zero_to_one_is_not_staged() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    adv(
+        &mut app,
+        AdvancedMessage::OpenCurve("flight_move_pitch".into()),
+    );
+    adv(
+        &mut app,
+        AdvancedMessage::PointTyped(1, PointPart::Out, "1.5".into()),
+    );
+    adv(&mut app, AdvancedMessage::SubmitPoints);
+    assert_eq!(pending(&app), 0);
+    assert!(has(&app, POINT_RANGE));
+}
+
+#[test]
+fn keyboard_and_mouse_curve_goes_to_the_keyboard_slot() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::KeyboardMouse);
+    adv(
+        &mut app,
+        AdvancedMessage::OpenCurve("flight_move_pitch".into()),
+    );
+    adv(&mut app, AdvancedMessage::AddPoint);
+    assert_eq!(pending(&app), 1);
+    let set = applied(&mut app, &path);
+    assert_eq!(
+        set,
+        after(
+            ADVANCED,
+            Op::SetCurve {
+                kind: DeviceKind::Keyboard,
+                instance: 1,
+                group: "flight_move_pitch".into(),
+                points: points(&[("0.5", "0.5")]),
+            }
+        )
+    );
+    assert_eq!(
+        curve_of(&set, DeviceKind::Keyboard, 1, "flight_move_pitch"),
+        points(&[("0.5", "0.5")])
+    );
+    adv(
+        &mut app,
+        AdvancedMessage::Reset(OptionField::Curve {
+            group: "flight_move_pitch".into(),
+        }),
+    );
+    assert_eq!(pending(&app), 1);
+    assert_eq!(applied(&mut app, &path), ADVANCED);
+}
+
+#[test]
+fn orphan_device_is_listed() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    assert!(has(&app, "X52 H.O.T.A.S."));
+    assert!(has(&app, NOT_CONNECTED));
+    pick_device(&mut app, DevicePick::Unmapped(X52.into()));
+    assert!(has(&app, "Z rotation"));
+    let field = axis_field(X52, "rotz", AxisField::Deadzone);
+    adv(&mut app, AdvancedMessage::Slide(field, 0.3));
+    adv(&mut app, AdvancedMessage::Release);
+    assert_eq!(
+        applied(&mut app, &path),
+        replaced_once(ADVANCED, "deadzone=\"0.44549999\"", "deadzone=\"0.3\"")
+    );
+}
+
+#[test]
+fn deviceoptions_pair_with_their_slot_by_guid() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    assert!(has(&app, "Joystick 2"));
+    assert!(has(&app, "Thrustmaster T-Pedals"));
+    assert!(!has(&app, "T-Pedals"));
+    pick_device(&mut app, DevicePick::Joystick(2));
+    assert!(has(&app, "Z axis"));
+    assert!(has(&app, "Z rotation"));
+}
+
+#[test]
+fn file_only_group_is_listed_as_not_in_this_game_version() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(2));
+    assert!(has(&app, NOT_IN_BUILD));
+    assert!(has(&app, "Flight strafe old"));
+    adv(
+        &mut app,
+        AdvancedMessage::Invert("flight_strafe_old".into(), false),
+    );
+    assert_eq!(pending(&app), 1);
+    assert_eq!(
+        applied(&mut app, &path),
+        replaced_once(
+            ADVANCED,
+            "<flight_strafe_old invert=\"1\"/>",
+            "<flight_strafe_old invert=\"0\"/>"
+        )
+    );
+}
+
+#[test]
+fn without_game_data_advanced_shows_what_the_file_holds() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), false);
+    assert!(has_containing(&app, NO_GAME_DATA_NOTE));
+    pick_device(&mut app, DevicePick::Joystick(1));
+    assert!(has(&app, "Flight move pitch"));
+    assert!(has(&app, "Flight view"));
+    assert_eq!(count(&app, "Exponent"), 3);
+    assert_eq!(count(&app, "Invert"), 0);
+    assert_eq!(count(&app, "Response curve"), 1);
+    assert!(has(&app, "Y axis"));
+    pick_device(&mut app, DevicePick::Joystick(2));
+    assert_eq!(count(&app, "Invert"), 2);
+    assert!(!has(&app, NOT_IN_BUILD));
+}
+
+#[test]
+fn tabs_switch_between_binds_and_advanced_controls() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    assert!(has(&app, "Keyboard and mouse"));
+    assert!(!has(&app, "Conflicts"));
+    clicked(&mut app, BINDS_TAB);
+    assert!(!has(&app, "Keyboard and mouse"));
+    assert!(has(&app, "Conflicts"));
+    clicked(&mut app, ADVANCED_TAB);
+    assert!(has(&app, "Keyboard and mouse"));
+}
+
+#[test]
+fn advanced_controls_pictures() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    let field = group_field("flight_move_pitch", GroupField::Exponent);
+    adv(
+        &mut app,
+        AdvancedMessage::Typed(field.clone(), "2.5".into()),
+    );
+    adv(&mut app, AdvancedMessage::Submit(field));
+    assert!(has(&app, "Was 2"));
+    adv(
+        &mut app,
+        AdvancedMessage::OpenCurve("flight_move_pitch".into()),
+    );
+    assert_eq!(pending(&app), 1);
+    for (choice, name) in [
+        (ThemeChoice::Dark, "advanced-controls-dark"),
+        (ThemeChoice::Light, "advanced-controls-light"),
+    ] {
+        testkit::snapshot(&mut sim(&app), &theme::theme(choice), name);
+    }
 }
