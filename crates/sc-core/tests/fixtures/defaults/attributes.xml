@@ -1,0 +1,10 @@
+<Attributes Version="35">
+ <Attr name="Resolution" value="-1" platform="pc" confirmation="1"/>
+ <Attr name="FieldOfView" cvar="cl_fov" value="80"/>
+ <Attr name="Vibration" cvar="i_forcefeedback" value="1"/>
+ <Attr name="ShowHints" cvar="g_showHints" value="1"/>
+ <Attr name="HeadtrackingEnabled" cvar="pl_headtracking" value="0"/>
+ <Attr name="VoipVolume" value="0.75"/>
+ <Attr name="Height" cvar="r_height" value="720" platform="pc" confirmation="1"/>
+ <Attr name="Language" cvar="g_language" value="english"/>
+</Attributes>

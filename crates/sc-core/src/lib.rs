@@ -11,6 +11,7 @@ pub mod error;
 pub mod guard;
 pub mod install;
 pub mod launcher;
+pub mod localization;
 pub mod lock;
 pub mod process;
 pub mod safe_write;
