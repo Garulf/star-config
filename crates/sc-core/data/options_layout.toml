@@ -1,0 +1,138 @@
+# Where each attributes.xml setting sits in the game's Options menu.
+#
+# The menu is compiled into the game, so this file is kept by hand. tools/options_layout_draft.py
+# drafts new entries per patch; check them against the in-game menu. It holds names, game string
+# keys and our own wording only, never text from the game's files. A fallback is shown when the
+# game's strings are unavailable.
+#
+# kind: toggle | slider (min, max, step) | number | choice (choices) | text
+# A range is stated only when it is known. The slider ranges below are guesses carried over from
+# the first catalogue; a number field is used wherever none is known.
+#
+# These 18 entries come from the first catalogue. The tab and the section names are our own
+# grouping and are not confirmed against the in-game menu.
+
+[[tab]]
+key = "pause_ForegroundOptionMenuButtonCommsSettings"
+fallback = "Comms and head tracking"
+
+[[tab.section]]
+fallback = "Head tracking"
+
+[[tab.section.entry]]
+name = "HeadtrackingSource"
+label_key = "pause_OptionsHeadtrackingSource"
+fallback = "Source"
+kind = "number"
+note = "Which number means which device is not confirmed. Check the in-game menu."
+
+[[tab.section.entry]]
+name = "HeadtrackingToggle"
+fallback = "Enabled"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingToggleAutoCalibrate"
+label_key = "pause_OptionsHeadtrackingToggleAutoCalibrate"
+fallback = "Recalibrate when enabled"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingGlobalSmoothingPosition"
+label_key = "pause_options_headtracking_global_smoothing_position"
+fallback = "Position smoothing"
+kind = "slider"
+min = 0.0
+max = 1.0
+step = 0.01
+note = "Range is a guess. Type a value to go outside it."
+
+[[tab.section.entry]]
+name = "HeadtrackingGlobalSmoothingRotation"
+label_key = "pause_options_headtracking_global_smoothing_rotation"
+fallback = "Rotation smoothing"
+kind = "slider"
+min = 0.0
+max = 1.0
+step = 0.01
+note = "Range is a guess. Type a value to go outside it."
+
+[[tab.section.entry]]
+name = "HeadtrackingInactivityTime"
+label_key = "pause_OptionsHeadTrackingInactivityTime"
+fallback = "Inactivity time"
+kind = "slider"
+min = 0.0
+max = 30.0
+step = 0.5
+note = "Range is a guess. Type a value to go outside it."
+
+[[tab.section.entry]]
+name = "HeadtrackingEnableSeatPositionOffset"
+fallback = "Seat position offset"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingEnableRollSeat"
+label_key = "pause_OptionsHeadtrackingEnableRollSeat"
+fallback = "Roll while seated"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingEnableRollFPS"
+label_key = "pause_OptionsHeadtrackingEnableRollFPS"
+fallback = "Roll on foot"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingHoldUseRawDuringHold"
+label_key = "pause_OptionsHeadTrackingHoldUseRawDuringHold"
+fallback = "Raw values while held"
+kind = "toggle"
+
+[[tab.section]]
+fallback = "Head tracking: when it is off"
+
+[[tab.section.entry]]
+name = "HeadtrackingDisableDuringSeat"
+fallback = "Off while seated"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingDisableDuringWalking"
+fallback = "Off on foot"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingDisableDuringADS"
+fallback = "Off while aiming"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingDisableDuringVehicleAds"
+fallback = "Off while aiming in a vehicle"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingDisableDuringMobiGlas"
+fallback = "Off in mobiGlas"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingDisableDuringIM"
+fallback = "Off in interaction mode"
+kind = "toggle"
+
+[[tab.section]]
+fallback = "Head tracking: third person"
+
+[[tab.section.entry]]
+name = "HeadtrackingThirdPersonCameraToggle"
+fallback = "Third person camera"
+kind = "toggle"
+
+[[tab.section.entry]]
+name = "HeadtrackingThirdPersonDisableDuringInventory"
+label_key = "pause_OptionsHeadtrackingThirdPersonDisableDuringInventory"
+fallback = "Off in inventory"
+kind = "toggle"
