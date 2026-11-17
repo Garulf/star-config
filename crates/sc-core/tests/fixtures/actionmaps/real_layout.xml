@@ -1,0 +1,58 @@
+<ActionMaps version="1" optionsVersion="2" rebindVersion="2" profileName="Personal">
+ <CustomisationUIHeader label="Personal" description="" image="">
+  <devices>
+   <keyboard instance="1"/>
+   <mouse instance="1"/>
+   <joystick instance="1"/>
+   <joystick instance="2"/>
+  </devices>
+  <categories>
+   <category label="@ui_CCSeatGeneral"/>
+   <category label="@ui_CCSpaceFlight"/>
+   <category label="@ui_CGLightControllerDesc"/>
+   <category label="@ui_CCFPS"/>
+   <category label="@ui_CCVehicle"/>
+   <category label="@ui_CGEASpectator"/>
+   <category label="@ui_CGOpticalTracking"/>
+   <category label="@ui_CGInteraction"/>
+  </categories>
+ </CustomisationUIHeader>
+ <deviceoptions name="X52 H.O.T.A.S.  {00000000-0000-0000-0000-000000000000}">
+  <option input="rotz" deadzone="0.44549999"/>
+ </deviceoptions>
+ <options type="keyboard" instance="1" Product="Keyboard  {00000000-0000-0000-0000-000000000000}"/>
+ <options type="joystick" instance="1" Product="X52 H.O.T.A.S.  {00000000-0000-0000-0000-000000000000}">
+  <flight_strafe_forward invert="1"/>
+  <flight_strafe_backward invert="1"/>
+ </options>
+ <modifiers />
+ <actionmap name="spaceship_movement">
+  <action name="v_afterburner">
+   <rebind input="js1_button7"/>
+  </action>
+  <action name="v_atc_request">
+   <rebind input="js1_button30" multiTap="2"/>
+  </action>
+  <action name="v_autoland">
+   <rebind input="js1_ "/>
+  </action>
+  <action name="v_ifcs_speed_limiter_reset_scm">
+   <rebind input="js1_button8" activationMode="double_tap"/>
+  </action>
+ </actionmap>
+ <actionmap name="spaceship_weapons">
+  <action name="v_attack1_group1">
+   <rebind input="kb1_space"/>
+   <rebind input="js1_button1"/>
+   <rebind input="js2_ "/>
+  </action>
+  <action name="v_attack_group2">
+   <rebind input="js1_button6"/>
+  </action>
+ </actionmap>
+ <actionmap name="spaceship_power">
+  <action name="v_power_throttle_max">
+   <rebind input="js1_ " activationMode="press"/>
+  </action>
+ </actionmap>
+</ActionMaps>

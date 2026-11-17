@@ -541,7 +541,7 @@ impl State {
         let op = Op::Reset {
             map: edit.cell.map.clone(),
             action: edit.cell.action.clone(),
-            slot: edit.cell.slot,
+            kind: edit.cell.slot.kind,
         };
         if let Panel::Edit(edit) = &mut self.panel {
             edit.listening = false;
