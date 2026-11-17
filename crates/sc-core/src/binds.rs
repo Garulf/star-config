@@ -4,7 +4,7 @@ use crate::actionmaps::{
     ActionMaps, Binding, Conflict, DeviceKind, Slot, clashes, format_input, is_bound,
 };
 use crate::defaults::{ActionDef, GameData};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub const KINDS: [DeviceKind; 4] = [
     DeviceKind::Keyboard,
@@ -52,28 +52,30 @@ pub struct Row {
 /// Game order first. A file action the game does not know follows its map's own actions,
 /// and a map the game does not know comes last.
 pub fn rows(game: Option<&GameData>, doc: &ActionMaps) -> Vec<Row> {
+    let binds = Binds::of(doc);
     let mut file = file_actions(doc);
     let mut rows = Vec::new();
     for map in game.into_iter().flat_map(|game| &game.maps) {
-        let in_file = take_map(&mut file, &map.name);
+        let in_file = file.remove(map.name.as_str()).unwrap_or_default();
+        let known: HashSet<&str> = map.actions.iter().map(|def| def.name.as_str()).collect();
         rows.extend(
             map.actions
                 .iter()
-                .map(|def| row(doc, &map.name, &def.name, Some(def), true)),
+                .map(|def| row(&binds, &map.name, &def.name, Some(def), true)),
         );
         rows.extend(
             in_file
                 .iter()
-                .filter(|name| !map.actions.iter().any(|def| def.name == **name))
-                .map(|name| row(doc, &map.name, name, None, false)),
+                .filter(|name| !known.contains(**name))
+                .map(|name| row(&binds, &map.name, name, None, false)),
         );
     }
     let in_build = game.is_none();
-    for (map, actions) in &file {
+    for (map, actions) in file.in_order() {
         rows.extend(
             actions
                 .iter()
-                .map(|name| row(doc, map, name, None, in_build)),
+                .map(|name| row(&binds, map, name, None, in_build)),
         );
     }
     rows
@@ -124,33 +126,75 @@ fn conflict_of(holders: Vec<Holder>) -> Option<Conflict> {
     })
 }
 
-type FileActions<'a> = Vec<(&'a str, Vec<&'a str>)>;
+/// The file's bindings by map and action, in file order.
+struct Binds<'a> {
+    by_action: HashMap<(&'a str, &'a str), Vec<&'a Binding>>,
+}
+
+impl<'a> Binds<'a> {
+    fn of(doc: &'a ActionMaps) -> Self {
+        let mut by_action: HashMap<(&str, &str), Vec<&Binding>> = HashMap::new();
+        for binding in doc.bindings() {
+            by_action
+                .entry((&binding.map, &binding.action))
+                .or_default()
+                .push(binding);
+        }
+        Self { by_action }
+    }
+
+    fn of_kind(&self, map: &str, action: &str, kind: DeviceKind) -> Vec<&'a Binding> {
+        self.by_action
+            .get(&(map, action))
+            .into_iter()
+            .flatten()
+            .filter(|binding| binding.slot.is_some_and(|slot| slot.kind == kind))
+            .copied()
+            .collect()
+    }
+}
+
+/// The file's maps and their actions, each in file order, with lookup by map name.
+struct FileActions<'a> {
+    maps: Vec<(&'a str, Vec<&'a str>)>,
+    at: HashMap<&'a str, usize>,
+    taken: Vec<bool>,
+}
+
+impl<'a> FileActions<'a> {
+    fn remove(&mut self, map: &str) -> Option<Vec<&'a str>> {
+        let at = *self.at.get(map)?;
+        self.taken[at] = true;
+        Some(std::mem::take(&mut self.maps[at].1))
+    }
+
+    fn in_order(&self) -> impl Iterator<Item = &(&'a str, Vec<&'a str>)> {
+        self.maps
+            .iter()
+            .zip(&self.taken)
+            .filter(|(_, taken)| !**taken)
+            .map(|(entry, _)| entry)
+    }
+}
 
 fn file_actions(doc: &ActionMaps) -> FileActions<'_> {
-    let mut found: FileActions = Vec::new();
+    let mut maps: Vec<(&str, Vec<&str>)> = Vec::new();
+    let mut at: HashMap<&str, usize> = HashMap::new();
+    let mut seen: HashSet<(&str, &str)> = HashSet::new();
     for binding in doc.bindings() {
-        let at = match found.iter().position(|(map, _)| *map == binding.map) {
-            Some(at) => at,
-            None => {
-                found.push((&binding.map, Vec::new()));
-                found.len() - 1
-            }
-        };
-        if !found[at].1.contains(&binding.action.as_str()) {
-            found[at].1.push(&binding.action);
+        let index = *at.entry(&binding.map).or_insert_with(|| {
+            maps.push((&binding.map, Vec::new()));
+            maps.len() - 1
+        });
+        if seen.insert((&binding.map, &binding.action)) {
+            maps[index].1.push(&binding.action);
         }
     }
-    found
+    let taken = vec![false; maps.len()];
+    FileActions { maps, at, taken }
 }
 
-fn take_map<'a>(file: &mut FileActions<'a>, name: &str) -> Vec<&'a str> {
-    file.iter()
-        .position(|(map, _)| *map == name)
-        .map(|at| file.remove(at).1)
-        .unwrap_or_default()
-}
-
-fn row(doc: &ActionMaps, map: &str, action: &str, def: Option<&ActionDef>, in_build: bool) -> Row {
+fn row(binds: &Binds, map: &str, action: &str, def: Option<&ActionDef>, in_build: bool) -> Row {
     Row {
         map: map.into(),
         action: action.into(),
@@ -158,7 +202,7 @@ fn row(doc: &ActionMaps, map: &str, action: &str, def: Option<&ActionDef>, in_bu
         in_build,
         cells: KINDS.map(|kind| {
             let default = def.and_then(|def| def.defaults.get(&kind));
-            cell(kind, default, &doc.binds_of(map, action, kind))
+            cell(kind, default, &binds.of_kind(map, action, kind))
         }),
     }
 }
