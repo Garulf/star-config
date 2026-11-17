@@ -1,3 +1,5 @@
+#[cfg_attr(not(windows), allow(dead_code))]
+mod dinput_map;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod evdev_map;
 #[cfg(target_os = "linux")]
@@ -64,10 +66,10 @@ impl Backend for Box<dyn Backend + Send> {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 struct NoDevices;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 impl Backend for NoDevices {
     fn devices(&self) -> &[DeviceInfo] {
         &[]
@@ -91,7 +93,7 @@ pub fn open(class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
 pub fn open(class: DeviceClass) -> Session<Box<dyn Backend + Send>> {
     match class {
         DeviceClass::Gamepad => Session::new(Box::new(windows::XInputBackend::open())),
-        DeviceClass::Stick => Session::new(Box::new(NoDevices)),
+        DeviceClass::Stick => Session::new(Box::new(windows::DInputBackend::open())),
     }
 }
 
