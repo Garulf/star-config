@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/Garulf/star-config/compare/v0.2.0...v0.3.0) (2026-11-17)
+
+
+### Features
+
+* **config:** pick motion blur and other enumerated cvars from a list ([d6cdea5](https://github.com/Garulf/star-config/commit/d6cdea55b068aab316cdf94124f4677283be07f0))
+
 ## [0.2.0](https://github.com/Garulf/star-config/compare/v0.1.0...v0.2.0) (2026-11-17)
 
 
