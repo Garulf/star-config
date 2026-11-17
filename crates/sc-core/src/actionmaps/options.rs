@@ -549,10 +549,22 @@ fn check_product(product: &str) -> Result<()> {
 }
 
 fn check_number(value: &str) -> Result<()> {
-    match value.parse::<f64>() {
-        Ok(number) if number.is_finite() => Ok(()),
-        _ => Err(Error::Invalid(format!("{value:?} is not a number"))),
+    if is_plain_number(value) {
+        Ok(())
+    } else {
+        Err(Error::Invalid(format!("{value:?} is not a number")))
     }
+}
+
+/// A number as the game writes one: an optional minus, digits, and an optional fraction.
+pub fn is_plain_number(value: &str) -> bool {
+    let unsigned = value.strip_prefix('-').unwrap_or(value);
+    let (whole, fraction) = match unsigned.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (unsigned, None),
+    };
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    digits(whole) && fraction.is_none_or(digits)
 }
 
 #[cfg(test)]
@@ -562,6 +574,18 @@ mod tests {
     use crate::staging::Document;
     use DeviceKind::{Gamepad, Joystick, Keyboard, Mouse};
     use std::fs;
+
+    #[test]
+    fn only_plain_decimals_are_numbers() {
+        for good in ["0", "1.5", "-2", "-0.25", "10.000"] {
+            assert!(is_plain_number(good), "{good}");
+        }
+        for bad in [
+            "", "1e3", "+1", "1.", ".5", "-", "1.2.3", " 1", "NaN", "inf", "0x10", "1,5",
+        ] {
+            assert!(!is_plain_number(bad), "{bad}");
+        }
+    }
 
     const PROFILE: &str = "real_profile.xml";
     const STICK_L: &str = " VKBsim Gladiator EVO L    {00000000-0000-0000-0000-000000000000}";

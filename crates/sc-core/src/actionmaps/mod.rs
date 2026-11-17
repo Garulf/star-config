@@ -2,7 +2,9 @@
 
 mod options;
 
-pub use options::{AxisField, AxisOption, DeviceOptions, GroupField, GroupOptions, GroupSetting};
+pub use options::{
+    AxisField, AxisOption, DeviceOptions, GroupField, GroupOptions, GroupSetting, is_plain_number,
+};
 
 use crate::error::{Error, Result};
 use crate::staging::Document;
