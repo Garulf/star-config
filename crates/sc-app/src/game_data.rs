@@ -83,6 +83,14 @@ impl GameDataStore {
         }
     }
 
+    /// After an undo or restore, which may have put back any channel's `global.ini`.
+    pub fn forget_all(&self) {
+        for slot in lock(&self.slots).values() {
+            slot.generation.fetch_add(1, Ordering::SeqCst);
+            lock(&slot.entry).take();
+        }
+    }
+
     fn slot(&self, channel: &Channel) -> Arc<Slot> {
         lock(&self.slots)
             .entry(channel.dir.clone())
@@ -223,6 +231,18 @@ mod tests {
                 "the caller still gets its result"
             );
         });
+        assert!(store.cached(&live).is_none());
+    }
+
+    #[test]
+    fn forget_all_clears_every_channel() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = demo(temp.path());
+        let store = ctx.game_data();
+        let live = live(&ctx);
+        let _ = store.load(&live, &ctx.dirs.game_data());
+        assert!(store.cached(&live).is_some());
+        store.forget_all();
         assert!(store.cached(&live).is_none());
     }
 

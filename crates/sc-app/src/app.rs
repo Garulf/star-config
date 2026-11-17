@@ -606,6 +606,7 @@ impl App {
             }
             Message::UndoToast(id) => self.undo_toast(id),
             Message::Restored(scopes, result) => {
+                self.ctx.game_data().forget_all();
                 let pruned = match result {
                     Ok(()) => {
                         self.push_toast(Toast::success("Restored the previous files"));
@@ -1563,6 +1564,20 @@ mod tests {
             settings::KEEP_MIN as usize
         );
         assert_eq!(store.list(&live_scope).unwrap().len(), 7);
+    }
+
+    #[test]
+    fn a_restore_drops_the_game_data_it_may_have_made_stale() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = testkit::demo_base(temp.path());
+        testkit::demo_game_files(&ctx);
+        testkit::seed_game_data(&ctx);
+        let live = testkit::channel_named(&ctx, "LIVE");
+        let store = ctx.game_data();
+        let _ = store.load(&live, &ctx.dirs.game_data());
+        let mut app = App::with(ctx);
+        let _ = app.update(Message::Restored(Vec::new(), Ok(())));
+        assert!(store.cached(&live).is_none());
     }
 
     #[test]
