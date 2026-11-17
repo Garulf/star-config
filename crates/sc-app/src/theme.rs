@@ -978,10 +978,10 @@ pub mod advanced {
     use iced::Padding;
 
     pub const INDENT: f32 = space::LG;
-    pub const VALUE_WIDTH: f32 = 56.0;
+    pub const VALUE_WIDTH: f32 = 96.0;
     pub const AXIS_SLIDER_WIDTH: f32 = 100.0;
-    pub const AXIS_SLIDER_CELL: f32 = 200.0;
-    pub const AXIS_NUMBER_CELL: f32 = 140.0;
+    pub const AXIS_SLIDER_CELL: f32 = 240.0;
+    pub const AXIS_NUMBER_CELL: f32 = 164.0;
     pub const PLOT_WIDTH: f32 = 220.0;
     pub const PLOT_HEIGHT: f32 = 120.0;
     pub const PLOT_GAP: f32 = 2.0;

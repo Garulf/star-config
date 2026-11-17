@@ -1630,6 +1630,86 @@ fn without_game_data_advanced_shows_what_the_file_holds() {
 }
 
 #[test]
+fn typed_text_survives_an_edit_elsewhere() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    let exponent = group_field("flight_move_yaw", GroupField::Exponent);
+    adv(
+        &mut app,
+        AdvancedMessage::Typed(exponent.clone(), "3.25".into()),
+    );
+    adv(
+        &mut app,
+        AdvancedMessage::OpenCurve("flight_move_pitch".into()),
+    );
+    adv(
+        &mut app,
+        AdvancedMessage::PointTyped(0, PointPart::In, "0.33".into()),
+    );
+    adv(
+        &mut app,
+        AdvancedMessage::Invert("flight_move_roll".into(), true),
+    );
+    assert_eq!(pending(&app), 1);
+    let fields = field_texts(&app);
+    assert!(fields.contains(&"3.25".to_string()), "{fields:?}");
+    assert!(fields.contains(&"0.33".to_string()), "{fields:?}");
+    assert!(has(&app, "Set"));
+
+    adv(&mut app, AdvancedMessage::Submit(exponent));
+    assert_eq!(pending(&app), 2);
+    assert!(!has(&app, "Set"), "a staged draft is done with");
+    adv(&mut app, AdvancedMessage::SubmitPoints);
+    assert_eq!(pending(&app), 3);
+    let text = applied(&mut app, &path);
+    assert!(
+        text.contains("<flight_move_yaw exponent=\"3.25\"/>"),
+        "{text}"
+    );
+    assert_eq!(
+        curve_of(&text, DeviceKind::Joystick, 1, "flight_move_pitch"),
+        points(&[("0.33", "0.1"), ("0.5", "0.3"), ("0.75", "0.6")])
+    );
+}
+
+#[test]
+fn switching_device_drops_typed_text() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    let exponent = group_field("flight_move_yaw", GroupField::Exponent);
+    adv(&mut app, AdvancedMessage::Typed(exponent, "3.25".into()));
+    pick_device(&mut app, DevicePick::Joystick(3));
+    assert!(!field_texts(&app).contains(&"3.25".to_string()));
+}
+
+#[test]
+fn gamepad_and_keyboard_show_their_product_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    assert!(has(&app, "Controller (Gamepad)"));
+    assert!(has(&app, "Keyboard"));
+    pick_device(&mut app, DevicePick::Gamepad);
+    assert_eq!(count(&app, "Controller (Gamepad)"), 2, "list and header");
+}
+
+#[test]
+fn unset_values_say_game_default_everywhere() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = advanced_demo(temp.path(), true);
+    pick_device(&mut app, DevicePick::Joystick(1));
+    assert!(!has(&app, "Default"));
+    assert!(has(&app, GAME_DEFAULT));
+    assert!(has(
+        &app,
+        "Game default assumed to be 0 for deadzone and 1 for saturation"
+    ));
+    pick_device(&mut app, DevicePick::Joystick(2));
+    assert!(!has(&app, "Default"));
+}
+
+#[test]
 fn tabs_switch_between_binds_and_advanced_controls() {
     let temp = tempfile::tempdir().unwrap();
     let (mut app, _) = advanced_demo(temp.path(), true);

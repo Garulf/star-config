@@ -19,7 +19,7 @@ use crate::widgets::{
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{self, Column, Row, Space, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length, Padding};
-use sc_core::actionmaps::{AxisField, GroupField, Op};
+use sc_core::actionmaps::{AxisField, GroupField, Op, is_plain_number};
 use sheet::{
     AXIS_FIELDS, AxisRow, DeviceEntry, Files, GroupLine, Points, Setting, Sheet, in_order,
     new_point, number, parse_points, samples,
@@ -34,11 +34,13 @@ pub const POINT_RANGE: &str = "Each point needs an in and an out value from 0 to
 const NO_GROUPS: &str = "Your file changes no options for this device.";
 const NO_AXES: &str = "Your file sets no deadzone, saturation or acceleration for this device.";
 const NO_POINTS: &str = "No points yet. Add one to shape the response.";
-const DEFAULT_VALUE: &str = "Default";
 const PLOT_BARS: usize = 24;
 const SLIDER_STEP: f64 = 0.01;
-/// Where an unset sensitivity slider rests: the game's unscaled response.
+/// Where an unset slider rests. The game's data states none of these, so each is an
+/// assumption the view says out loud with [`assumed`].
 const SENSITIVITY_REST: f64 = 1.0;
+const DEADZONE_REST: f64 = 0.0;
+const SATURATION_REST: f64 = 1.0;
 
 /// A value the view can change.
 #[derive(Debug, Clone, PartialEq)]
@@ -89,10 +91,13 @@ struct CurveEdit {
 pub(super) struct Advanced {
     pick: DevicePick,
     sheet: Option<Sheet>,
+    /// Typed text not yet staged. Kept across rebuilds while its field is still shown.
     drafts: Vec<(OptionField, String)>,
     sliding: Option<(OptionField, f64)>,
     error: Option<(OptionField, &'static str)>,
     curve: Option<CurveEdit>,
+    /// A curve edit was just staged, so the editor takes the staged points on the next rebuild.
+    resync_curve: bool,
 }
 
 impl Advanced {
@@ -104,6 +109,7 @@ impl Advanced {
             sliding: None,
             error: None,
             curve: None,
+            resync_curve: false,
         }
     }
 
@@ -112,23 +118,55 @@ impl Advanced {
         if sheet.entry(&self.pick).is_none() {
             self.pick = DevicePick::KeyboardMouse;
             sheet = Sheet::build(game, files, &self.pick);
+            self.forget_typing();
         }
-        self.drafts.clear();
+        self.drafts.retain(|(field, text)| {
+            matches!(field_now(&sheet, field), Some(now) if now != Some(text.trim()))
+        });
+        if self
+            .error
+            .as_ref()
+            .is_some_and(|(field, _)| field_now(&sheet, field).is_none())
+        {
+            self.error = None;
+        }
         self.sliding = None;
-        self.error = None;
+        let resync = std::mem::take(&mut self.resync_curve);
+        let before = self.curve_points();
         if let Some(edit) = &mut self.curve {
             match sheet
                 .group(&edit.group)
                 .and_then(|line| line.curve.as_ref())
             {
-                Some(curve) => {
+                Some(curve) if resync || before.as_ref() == Some(&edit.points) => {
                     edit.points = curve.effective().cloned().unwrap_or_default();
                     edit.error = None;
                 }
+                Some(_) => {}
                 None => self.curve = None,
             }
         }
         self.sheet = Some(sheet);
+    }
+
+    /// What the open curve's points were in the sheet now on screen.
+    fn curve_points(&self) -> Option<Points> {
+        let group = &self.curve.as_ref()?.group;
+        let curve = self.sheet.as_ref()?.group(group)?.curve.as_ref()?;
+        Some(curve.effective().cloned().unwrap_or_default())
+    }
+
+    fn forget_typing(&mut self) {
+        self.drafts.clear();
+        self.error = None;
+        self.curve = None;
+    }
+
+    fn drop_draft(&mut self, field: &OptionField) {
+        self.drafts.retain(|(f, _)| f != field);
+        if self.error.as_ref().is_some_and(|(f, _)| f == field) {
+            self.error = None;
+        }
     }
 
     fn clear(&mut self) {
@@ -275,6 +313,8 @@ impl Advanced {
             edit.error = Some(POINT_RANGE);
             return None;
         };
+        edit.points.clone_from(&points);
+        self.resync_curve = true;
         Some(Op::SetCurve {
             kind: slot.kind,
             instance: slot.instance,
@@ -316,7 +356,7 @@ impl State {
         let op = match message {
             AdvancedMessage::Pick(pick) => {
                 self.advanced.pick = pick;
-                self.advanced.curve = None;
+                self.advanced.forget_typing();
                 self.rebuild_advanced();
                 None
             }
@@ -342,7 +382,11 @@ impl State {
                 .sliding
                 .take()
                 .and_then(|(field, value)| self.advanced.set_op(&field, &number(value))),
-            AdvancedMessage::Reset(field) => self.advanced.reset_op(&field),
+            AdvancedMessage::Reset(field) => {
+                self.advanced.drop_draft(&field);
+                self.advanced.resync_curve |= matches!(field, OptionField::Curve { .. });
+                self.advanced.reset_op(&field)
+            }
             AdvancedMessage::OpenCurve(group) => {
                 self.open_curve(group);
                 None
@@ -370,7 +414,7 @@ impl State {
 
     fn submit(&mut self, field: &OptionField) -> Option<Op> {
         let typed = self.advanced.draft(field)?.trim().to_string();
-        if !typed.parse::<f64>().is_ok_and(f64::is_finite) {
+        if !is_plain_number(&typed) {
             self.advanced.error = Some((field.clone(), NOT_A_NUMBER));
             return None;
         }
@@ -434,6 +478,7 @@ impl State {
         }
         let group = edit.group.clone();
         edit.points.clear();
+        self.advanced.resync_curve = true;
         self.advanced.reset_op(&OptionField::Curve { group })
     }
 
@@ -658,6 +703,10 @@ impl State {
             .clamp(min, max);
         let shown = sliding.map(number).or_else(|| setting.effective().cloned());
         let moved = field.clone();
+        let mut lines = notes(setting, String::clone);
+        if setting.effective().is_none() {
+            lines.push(assumed(&number(SENSITIVITY_REST)));
+        }
         let control = row![
             slider(min..=max, value, move |value| {
                 wrap(AdvancedMessage::Slide(moved.clone(), value))
@@ -669,12 +718,7 @@ impl State {
         ]
         .spacing(space::MD)
         .align_y(Alignment::Center);
-        control_row(
-            "Sensitivity",
-            notes(setting, String::clone),
-            setting.changed(),
-            control,
-        )
+        control_row("Sensitivity", lines, setting.changed(), control)
     }
 
     fn curve_row<'a>(
@@ -787,6 +831,18 @@ impl State {
         if sheet.blocks.is_empty() {
             return section("Axes", container(hint(NO_AXES)).padding(space::LG));
         }
+        let unset = sheet
+            .blocks
+            .iter()
+            .flat_map(|block| &block.rows)
+            .any(|axis| {
+                AXIS_FIELDS
+                    .iter()
+                    .zip(&axis.values)
+                    .any(|(field, setting)| {
+                        *field != AxisField::Acceleration && setting.now.is_none()
+                    })
+            });
         let blocks = sheet.blocks.iter().map(|block| -> Element<'a, Message> {
             let mut table = Column::new()
                 .push(container(strong(block.title.as_str())).padding(Padding {
@@ -801,7 +857,11 @@ impl State {
             }
             table.into()
         });
-        section("Axes", rows(blocks))
+        let mut content = Column::new().push(rows(blocks));
+        if unset {
+            content = content.push(container(hint(assumed_axis_rests())).padding(space::LG));
+        }
+        section("Axes", content)
     }
 
     fn axis_row<'a>(&'a self, product: &str, axis: &'a AxisRow) -> Element<'a, Message> {
@@ -814,14 +874,8 @@ impl State {
             };
             let content = match field {
                 AxisField::Acceleration => self.axis_number(key, setting),
-                AxisField::Deadzone | AxisField::Saturation => {
-                    let rest = if *field == AxisField::Saturation {
-                        1.0
-                    } else {
-                        0.0
-                    };
-                    self.axis_slider(key, setting, rest)
-                }
+                AxisField::Deadzone => self.axis_slider(key, setting, DEADZONE_REST),
+                AxisField::Saturation => self.axis_slider(key, setting, SATURATION_REST),
             };
             cells.push((content, AXIS_COLUMNS[at + 1].1));
         }
@@ -867,11 +921,11 @@ impl State {
             .or(setting.now.as_deref())
             .unwrap_or_default();
         let typed = field.clone();
-        let input = text_field(DEFAULT_VALUE, value, move |text| {
+        let input = text_field(GAME_DEFAULT, value, move |text| {
             wrap(AdvancedMessage::Typed(typed.clone(), text))
         })
         .on_submit(wrap(AdvancedMessage::Submit(field.clone())))
-        .width(layout::NUMBER_WIDTH)
+        .width(metrics::NUMBER_FIELD_WIDTH)
         .align_x(Alignment::End);
         row![input, self.reset_icon(field)]
             .spacing(space::XS)
@@ -1029,6 +1083,40 @@ fn notes<T: PartialEq>(setting: &Setting<T>, show: impl Fn(&T) -> String) -> Vec
     lines
 }
 
+/// How every view line says a slider rests at a value the game's data does not state.
+fn assumed(value: &str) -> String {
+    format!("{GAME_DEFAULT} assumed to be {value}")
+}
+
+fn assumed_axis_rests() -> String {
+    assumed(&format!(
+        "{} for deadzone and {} for saturation",
+        number(DEADZONE_REST),
+        number(SATURATION_REST)
+    ))
+}
+
+/// The value a typed field holds in the sheet, or `None` when the sheet has no such field.
+fn field_now<'a>(sheet: &'a Sheet, field: &OptionField) -> Option<Option<&'a str>> {
+    let setting = match field {
+        OptionField::Group { group, field } => {
+            let line = sheet.group(group)?;
+            match field {
+                GroupField::Exponent => line.exponent.as_ref(),
+                GroupField::Sensitivity => line.sensitivity.as_ref(),
+                GroupField::Invert => None,
+            }?
+        }
+        OptionField::Axis {
+            product,
+            input,
+            field,
+        } => sheet.axis(product, input, *field)?,
+        OptionField::Curve { .. } => return None,
+    };
+    Some(setting.now.as_deref())
+}
+
 fn on_off(value: &bool) -> String {
     if *value { "On" } else { "Off" }.to_string()
 }
@@ -1047,7 +1135,7 @@ fn parse(value: Option<&String>) -> Option<f64> {
 
 fn value_label<'a>(value: Option<String>, staged: bool) -> Element<'a, Message> {
     let set = value.is_some();
-    let shown = text(value.unwrap_or_else(|| DEFAULT_VALUE.to_string()))
+    let shown = text(value.unwrap_or_else(|| GAME_DEFAULT.to_string()))
         .size(size::BODY)
         .width(metrics::VALUE_WIDTH)
         .align_x(Alignment::End)

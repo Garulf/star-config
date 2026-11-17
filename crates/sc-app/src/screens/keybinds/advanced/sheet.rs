@@ -1,7 +1,9 @@
 //! What the Advanced controls view shows for one device, built once per load or edit.
 
 use super::super::inputs::{input_caps, product_name};
-use sc_core::actionmaps::{ActionMaps, AxisField, DeviceKind, DeviceOptions, GroupSetting, Slot};
+use sc_core::actionmaps::{
+    ActionMaps, AxisField, DeviceKind, DeviceOptions, GroupSetting, Slot, is_plain_number,
+};
 use sc_core::defaults::{GameData, OptionGroup, OptionTree, humanise};
 
 pub const JOYSTICK_SLOTS: u32 = 8;
@@ -207,21 +209,27 @@ fn device_entries(file: &ActionMaps) -> Vec<DeviceEntry> {
     picks
         .into_iter()
         .map(|pick| {
-            let product = match pick {
-                DevicePick::Joystick(_) => slot_products(file, &pick)
-                    .into_iter()
-                    .map(product_name)
-                    .find(|name| !name.is_empty()),
-                _ => None,
-            };
+            let label = pick.title();
             DeviceEntry {
-                label: pick.title(),
-                product,
+                product: products_line(file, &pick, &label),
+                label,
                 count: overrides(file, &pick),
                 pick,
             }
         })
         .collect()
+}
+
+/// The product names the file gives the device's slots, such as `Controller (Gamepad)`, or
+/// `Keyboard, Mouse` for the pair. A name that only repeats the label is left out.
+fn products_line(file: &ActionMaps, pick: &DevicePick, label: &str) -> Option<String> {
+    let mut names: Vec<String> = Vec::new();
+    for name in slot_products(file, pick).into_iter().map(product_name) {
+        if !name.is_empty() && !name.eq_ignore_ascii_case(label) && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    (!names.is_empty()).then(|| names.join(", "))
 }
 
 fn unmapped_entries(file: &ActionMaps) -> Vec<DeviceEntry> {
@@ -570,8 +578,11 @@ pub fn parse_points(points: &[(String, String)]) -> Option<Vec<(f64, f64)>> {
 }
 
 fn unit(text: &str) -> Option<f64> {
-    text.trim()
-        .parse::<f64>()
+    let text = text.trim();
+    if !is_plain_number(text) {
+        return None;
+    }
+    text.parse::<f64>()
         .ok()
         .filter(|value| (0.0..=1.0).contains(value))
 }
@@ -642,6 +653,7 @@ pub fn in_order(points: &[(String, String)]) -> Option<Points> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sc_core::staging::Document;
 
     #[test]
     fn devices_pair_by_guid_and_fall_back_to_the_name() {
@@ -658,6 +670,40 @@ mod tests {
             " Controller (Gamepad) "
         ));
         assert!(!same_device("", ""));
+    }
+
+    #[test]
+    fn every_device_with_a_product_names_it() {
+        let file = ActionMaps::parse(
+            std::path::Path::new("actionmaps.xml"),
+            br#"<ActionMaps>
+ <ActionProfiles profileName="default">
+  <options type="keyboard" instance="1" Product="Wine Keyboard  {6F1D2B61-D5A0-11CF-BFC7-444553540000}"/>
+  <options type="mouse" instance="1" Product="Mouse  {6F1D2B60-D5A0-11CF-BFC7-444553540000}"/>
+  <options type="gamepad" instance="1" Product="Controller (Gamepad)"/>
+  <options type="joystick" instance="1" Product="VKB Gladiator NXT L  {0200231D-0000-0000-0000-504944564944}"/>
+  <options type="joystick" instance="2" Product="Joystick 2"/>
+ </ActionProfiles>
+</ActionMaps>
+"#,
+        )
+        .unwrap();
+        let products: Vec<(String, Option<String>)> = device_entries(&file)
+            .into_iter()
+            .take(4)
+            .map(|entry| (entry.label, entry.product))
+            .collect();
+        let named =
+            |label: &str, product: Option<&str>| (label.to_string(), product.map(str::to_string));
+        assert_eq!(
+            products,
+            [
+                named("Keyboard and mouse", Some("Wine Keyboard, Mouse")),
+                named("Gamepad", Some("Controller (Gamepad)")),
+                named("Joystick 1", Some("VKB Gladiator NXT L")),
+                named("Joystick 2", None),
+            ]
+        );
     }
 
     #[test]
@@ -702,6 +748,7 @@ mod tests {
             ])
         );
         assert_eq!(in_order(&[("1.2".into(), "0".into())]), None);
+        assert_eq!(in_order(&[("5e-1".into(), "0".into())]), None);
         assert_eq!(in_order(&[("x".into(), "0".into())]), None);
     }
 }
