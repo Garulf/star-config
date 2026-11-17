@@ -107,6 +107,9 @@ impl<'a> Document<'a> {
     }
 
     fn range(table: &Table, first: i32, count: usize) -> Option<std::ops::Range<usize>> {
+        if count == 0 {
+            return Some(0..0);
+        }
         let first = usize::try_from(first).ok()?;
         let end = first.checked_add(count)?;
         (end <= table.count).then_some(first..end)
@@ -155,6 +158,7 @@ impl<'a> Document<'a> {
             out.push_str("=\"");
             push_escaped(out, &self.string(u32_at(self.bytes, at + 4))?, true);
             out.push('"');
+            within_cap(out)?;
         }
         let kids = Self::range(&self.children, node.first_child, node.child_count)?;
         if kids.is_empty() && text.is_empty() {
@@ -163,6 +167,7 @@ impl<'a> Document<'a> {
         }
         out.push('>');
         push_escaped(out, &text, false);
+        within_cap(out)?;
         steps.push(Step::Close(node.tag));
         for kid in kids.rev() {
             let child = u32_at(self.bytes, self.children.start + kid * CHILD_LEN) as i32;
@@ -174,6 +179,10 @@ impl<'a> Document<'a> {
         }
         Some(())
     }
+}
+
+fn within_cap(out: &str) -> Option<()> {
+    (out.len() <= MAX_XML_BYTES).then_some(())
 }
 
 fn push_escaped(out: &mut String, text: &str, attribute: bool) {
@@ -434,6 +443,42 @@ mod tests {
         for fields in tables {
             assert_eq!(to_xml(&header(fields)), None, "{fields:?}");
         }
+    }
+
+    #[test]
+    fn leaf_nodes_ignore_their_unused_first_indexes() {
+        let mut bytes = encode("<a><b/></a>");
+        let leaf = header_field(&bytes, 1) + NODE_LEN;
+        for offset in [16, 20] {
+            bytes[leaf + offset..leaf + offset + 4].copy_from_slice(&(-1i32).to_le_bytes());
+        }
+        assert_eq!(to_xml(&bytes).as_deref(), Some("<a><b/></a>"));
+    }
+
+    #[test]
+    fn many_attributes_on_one_node_stop_at_the_output_cap() {
+        let attr_count = u16::MAX as usize;
+        let string = vec![b'x'; 4096];
+        let attr_pos = HEADER_LEN + NODE_LEN;
+        let string_pos = attr_pos + attr_count * ATTR_LEN;
+        let mut bytes = header([
+            (string_pos + string.len() + 1) as u32,
+            HEADER_LEN as u32,
+            1,
+            attr_pos as u32,
+            attr_count as u32,
+            string_pos as u32,
+            0,
+            string_pos as u32,
+            string.len() as u32 + 1,
+        ]);
+        let mut node = [0u8; NODE_LEN];
+        node[8..10].copy_from_slice(&u16::MAX.to_le_bytes());
+        bytes.extend(node);
+        bytes.resize(string_pos, 0);
+        bytes.extend(&string);
+        bytes.push(0);
+        assert_eq!(to_xml(&bytes), None);
     }
 
     #[test]

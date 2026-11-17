@@ -130,6 +130,9 @@ impl Archive {
         let mut header = [0u8; LOCAL_HEADER_LEN];
         file.read_exact(&mut header)
             .map_err(|err| self.damaged(&entry.info, err))?;
+        if !header.starts_with(b"PK") {
+            return Err(self.damaged(&entry.info, "its local header is missing"));
+        }
         let skip = u64::from(u16_at(&header, 26)) + u64::from(u16_at(&header, 28));
         file.seek(SeekFrom::Current(skip as i64)).map_err(io)?;
         let mut payload = Vec::new();
@@ -473,6 +476,17 @@ mod tests {
             Err(Error::Invalid(message)) => assert!(message.contains("encrypted"), "{message}"),
             other => panic!("expected an encrypted error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn entry_without_its_local_header_is_damaged() {
+        let mut bytes = single(Method::Store);
+        bytes[..2].copy_from_slice(b"XX");
+        let (_dir, archive) = archive_of(&bytes);
+        assert!(matches!(
+            archive.unwrap().read("data/one.bin"),
+            Err(Error::Parse { line: 0, .. })
+        ));
     }
 
     #[test]
