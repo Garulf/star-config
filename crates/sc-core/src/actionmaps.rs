@@ -287,7 +287,15 @@ fn bind(path: &Path, text: &mut String, map: &str, action: &str, input: &str) ->
     if rest.trim().is_empty() {
         return Err(Error::Invalid("use Unbind to clear a binding".into()));
     }
-    replace_kind(path, text, map, action, slot.kind, input)
+    replace_kind(
+        path,
+        text,
+        map,
+        action,
+        slot.kind,
+        input,
+        Keep::OtherAttributes,
+    )
 }
 
 fn unbind(path: &Path, text: &mut String, map: &str, action: &str, slot: Slot) -> Result<()> {
@@ -297,7 +305,13 @@ fn unbind(path: &Path, text: &mut String, map: &str, action: &str, slot: Slot) -
             "{input:?} is not a usable device prefix"
         )));
     }
-    replace_kind(path, text, map, action, slot.kind, &input)
+    replace_kind(path, text, map, action, slot.kind, &input, Keep::Nothing)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Keep {
+    OtherAttributes,
+    Nothing,
 }
 
 fn replace_kind(
@@ -307,6 +321,7 @@ fn replace_kind(
     action: &str,
     kind: DeviceKind,
     input: &str,
+    keep: Keep,
 ) -> Result<()> {
     check_name(map)?;
     check_name(action)?;
@@ -320,16 +335,49 @@ fn replace_kind(
     if tree.find_action(map_index, action).is_none() {
         xml_edit::append_child(text, tree.element(map_index), &named(ACTION, action));
     }
-    remove_rebinds(path, text, map, action, kind)?;
+    match keep {
+        Keep::OtherAttributes => remove_rebinds_after_first(path, text, map, action, kind)?,
+        Keep::Nothing => remove_rebinds(path, text, map, action, kind).map(drop)?,
+    }
 
     let tree = Tree::check(path, text)?;
     let action_index = tree
         .find_map(map)
         .and_then(|map_index| tree.find_action(map_index, action))
         .ok_or_else(|| not_added(ACTION, action))?;
-    let rebind = format!("<{REBIND} {INPUT}=\"{}\"/>", xml_edit::escape_attr(input));
-    xml_edit::append_child(text, tree.element(action_index), &rebind);
+    match tree
+        .find_rebind(action_index, kind)
+        .and_then(|rebind| attr(tree.element(rebind), INPUT))
+    {
+        Some(existing) => xml_edit::set_attr(text, existing, input),
+        None => {
+            let rebind = format!("<{REBIND} {INPUT}=\"{}\"/>", xml_edit::escape_attr(input));
+            xml_edit::append_child(text, tree.element(action_index), &rebind);
+        }
+    }
     Ok(())
+}
+
+fn remove_rebinds_after_first(
+    path: &Path,
+    text: &mut String,
+    map: &str,
+    action: &str,
+    kind: DeviceKind,
+) -> Result<()> {
+    loop {
+        let tree = Tree::check(path, text)?;
+        let Some(action_index) = tree
+            .find_map(map)
+            .and_then(|map_index| tree.find_action(map_index, action))
+        else {
+            return Ok(());
+        };
+        let Some(second) = tree.rebinds_of(action_index, kind).nth(1) else {
+            return Ok(());
+        };
+        xml_edit::remove_element(text, tree.element(second));
+    }
 }
 
 fn remove_rebinds(
@@ -585,7 +633,11 @@ impl Tree {
     }
 
     fn find_rebind(&self, action: usize, kind: DeviceKind) -> Option<usize> {
-        self.children[action].iter().copied().find(|&index| {
+        self.rebinds_of(action, kind).next()
+    }
+
+    fn rebinds_of(&self, action: usize, kind: DeviceKind) -> impl Iterator<Item = usize> + '_ {
+        self.children[action].iter().copied().filter(move |&index| {
             attr_value(self.element(index), INPUT)
                 .and_then(parse_input)
                 .is_some_and(|(slot, _)| slot.kind == kind)
@@ -629,7 +681,7 @@ fn kind_name(kind: DeviceKind) -> &'static str {
     OPTION_TYPES
         .iter()
         .find(|(_, found)| *found == kind)
-        .map_or("", |(name, _)| name)
+        .map_or("device", |(name, _)| name)
 }
 
 fn is_bound(input: &str) -> bool {
@@ -1033,7 +1085,7 @@ mod tests {
     }
 
     #[test]
-    fn bind_replaces_the_rebind_of_the_same_kind_with_a_plain_one() {
+    fn bind_keeps_the_other_attributes_of_the_rebind_it_replaces() {
         let original = fixture_text("profile.xml");
         let mut doc = doc("profile.xml");
         doc.apply(&bind(
@@ -1047,7 +1099,7 @@ mod tests {
             replaced_once(
                 &original,
                 "\"kb1_lalt+c\" multiTap=\"2\"/>",
-                "\"kb1_lalt+d\"/>"
+                "\"kb1_lalt+d\" multiTap=\"2\"/>"
             )
         );
         let edited = doc
@@ -1055,7 +1107,17 @@ mod tests {
             .iter()
             .find(|b| b.action == "v_toggle_decoupled")
             .unwrap();
-        assert_eq!(edited.extra, []);
+        assert_eq!(edited.extra, [("multiTap".into(), "2".into())]);
+
+        let mut again = doc.clone();
+        again
+            .apply(&bind(
+                "spaceship_movement",
+                "v_toggle_decoupled",
+                "kb1_lalt+d",
+            ))
+            .unwrap();
+        assert_eq!(again.to_bytes(), doc.to_bytes());
 
         let edited = applied(
             "profile.xml",
@@ -1563,17 +1625,12 @@ mod tests {
                 assert!(edited.contains(survivor), "{op:?} lost {survivor:?}");
             }
         }
-        let rebind = "    <rebind input=\"js1_button3\" curve=\"soft\"/>\n";
         assert_eq!(
             applied(
                 "unknown_bits.xml",
                 bind("spaceship_movement", "v_afterburner", "js1_button4")
             ),
-            replaced_once(
-                &replaced_once(&original, rebind, ""),
-                "    <rebind input=\"kb1_f\"/>\n",
-                "    <rebind input=\"kb1_f\"/>\n    <rebind input=\"js1_button4\"/>\n"
-            )
+            replaced_once(&original, "\"js1_button3\"", "\"js1_button4\"")
         );
         assert!(
             applied(
