@@ -60,12 +60,14 @@ fn dword(n: usize) -> u32 {
     u32::try_from(n).expect("DirectInput sizes fit in a DWORD")
 }
 
-fn object(guid: *const GUID, offset: usize, kind: u32) -> DIOBJECTDATAFORMAT {
+const DIDOI_ASPECTPOSITION: u32 = 0x100;
+
+fn object(guid: *const GUID, offset: usize, kind: u32, flags: u32) -> DIOBJECTDATAFORMAT {
     DIOBJECTDATAFORMAT {
         pguid: guid,
         dwOfs: dword(offset),
         dwType: kind | DIDFT_ANYINSTANCE | DIDFT_OPTIONAL,
-        dwFlags: 0,
+        dwFlags: flags,
     }
 }
 
@@ -73,14 +75,14 @@ fn joystick2_objects() -> Vec<DIOBJECTDATAFORMAT> {
     let axes = AXIS_GUIDS
         .iter()
         .zip(AXIS_OFFSETS)
-        .map(|(guid, offset)| object(guid, offset, DIDFT_AXIS));
+        .map(|(guid, offset)| object(guid, offset, DIDFT_AXIS, DIDOI_ASPECTPOSITION));
     let povs = (0..POV_COUNT).map(|i| {
         let offset = offset_of!(DIJOYSTATE2, rgdwPOV) + i * size_of::<u32>();
-        object(&POV_GUID, offset, DIDFT_POV)
+        object(&POV_GUID, offset, DIDFT_POV, 0)
     });
     let buttons = (0..BUTTON_COUNT).map(|i| {
         let offset = offset_of!(DIJOYSTATE2, rgbButtons) + i * size_of::<u8>();
-        object(core::ptr::null(), offset, DIDFT_BUTTON)
+        object(core::ptr::null(), offset, DIDFT_BUTTON, 0)
     });
     axes.chain(povs).chain(buttons).collect()
 }
@@ -311,10 +313,6 @@ pub struct DInputBackend {
     window: Option<HWND>,
     _input: Option<IDirectInput8W>,
 }
-
-// SAFETY: `open`, every `read` and the drop run on one dedicated thread, so the COM objects and
-// the window never cross threads; Send is only needed to fit `Box<dyn Backend + Send>`.
-unsafe impl Send for DInputBackend {}
 
 impl DInputBackend {
     pub fn open() -> Self {
