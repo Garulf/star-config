@@ -4,6 +4,7 @@ use sc_core::defaults::{self, GameData, Unavailable};
 use sc_core::install::Channel;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 pub type Loaded = Arc<Result<GameData, Unavailable>>;
@@ -13,50 +14,87 @@ struct Entry {
     loaded: Loaded,
 }
 
+/// One channel's state. `turn` makes loads of one channel take turns; `generation` lets a
+/// `forget` that lands during a load keep that load's result out of the store.
+#[derive(Default)]
+struct Slot {
+    turn: Mutex<()>,
+    generation: AtomicU64,
+    entry: Mutex<Option<Entry>>,
+}
+
+impl Slot {
+    fn current(&self, build: &Option<String>) -> Option<Loaded> {
+        lock(&self.entry)
+            .as_ref()
+            .filter(|entry| entry.build == *build)
+            .map(|entry| entry.loaded.clone())
+    }
+}
+
 /// Clones share one cache. A result is current while the channel's build id is the one it
 /// was read for; a failure is kept too, so a missing `Data.p4k` is not retried on every visit.
 #[derive(Clone, Default)]
 pub struct GameDataStore {
-    entries: Arc<Mutex<HashMap<PathBuf, Entry>>>,
+    slots: Arc<Mutex<HashMap<PathBuf, Arc<Slot>>>>,
 }
 
 impl GameDataStore {
+    /// Reads the channel's build manifest, so call it from `reload` or background work, not `view`.
     pub fn cached(&self, channel: &Channel) -> Option<Loaded> {
-        let build = channel.build_id();
-        self.entries()
-            .get(&channel.dir)
-            .filter(|entry| entry.build == build)
-            .map(|entry| entry.loaded.clone())
+        let slot = lock(&self.slots).get(&channel.dir).cloned()?;
+        slot.current(&channel.build_id())
     }
 
     /// Blocking: reads the cache or the archive. Call it inside `work::background`.
     pub fn load(&self, channel: &Channel, cache_root: &Path) -> Loaded {
-        if let Some(current) = self.cached(channel) {
+        self.load_with(channel, || defaults::load(channel, cache_root))
+    }
+
+    fn load_with(
+        &self,
+        channel: &Channel,
+        read: impl FnOnce() -> Result<GameData, Unavailable>,
+    ) -> Loaded {
+        let slot = self.slot(channel);
+        let _turn = lock(&slot.turn);
+        let build = channel.build_id();
+        if let Some(current) = slot.current(&build) {
             return current;
         }
-        let build = channel.build_id();
-        let loaded = Arc::new(defaults::load(channel, cache_root));
-        self.entries().insert(
-            channel.dir.clone(),
-            Entry {
+        let generation = slot.generation.load(Ordering::SeqCst);
+        let loaded = Arc::new(read());
+        let mut entry = lock(&slot.entry);
+        if slot.generation.load(Ordering::SeqCst) == generation {
+            *entry = Some(Entry {
                 build,
                 loaded: loaded.clone(),
-            },
-        );
+            });
+        }
         loaded
     }
 
     /// For a game update noticed while the build id did not change, or a `Data.p4k` that has
-    /// appeared since a failed load.
+    /// appeared since a failed load. A load running now keeps its result to itself.
     pub fn forget(&self, channel: &Channel) {
-        self.entries().remove(&channel.dir);
+        if let Some(slot) = lock(&self.slots).get(&channel.dir).cloned() {
+            slot.generation.fetch_add(1, Ordering::SeqCst);
+            lock(&slot.entry).take();
+        }
     }
 
-    fn entries(&self) -> MutexGuard<'_, HashMap<PathBuf, Entry>> {
-        self.entries
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn slot(&self, channel: &Channel) -> Arc<Slot> {
+        lock(&self.slots)
+            .entry(channel.dir.clone())
+            .or_default()
+            .clone()
     }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]
@@ -133,6 +171,59 @@ mod tests {
             after.as_ref().as_ref().unwrap().build,
             before.as_ref().as_ref().unwrap().build
         );
+    }
+
+    #[test]
+    fn loads_of_one_channel_take_turns() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = demo(temp.path());
+        let store = ctx.game_data();
+        let live = live(&ctx);
+        let reads = AtomicU64::new(0);
+        let results: Vec<Loaded> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        store.load_with(&live, || {
+                            reads.fetch_add(1, Ordering::SeqCst);
+                            std::thread::sleep(std::time::Duration::from_millis(20));
+                            defaults::load(&live, &ctx.dirs.game_data())
+                        })
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        assert!(results.iter().all(|r| Arc::ptr_eq(r, &results[0])));
+    }
+
+    #[test]
+    fn forget_during_a_load_wins() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = demo(temp.path());
+        let store = ctx.game_data();
+        let live = live(&ctx);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (store_ref, live_ref, cache) = (&store, &live, ctx.dirs.game_data());
+        std::thread::scope(|scope| {
+            let loading = scope.spawn(move || {
+                store_ref.load_with(live_ref, move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    defaults::load(live_ref, &cache)
+                })
+            });
+            started_rx.recv().unwrap();
+            store.forget(&live);
+            release_tx.send(()).unwrap();
+            assert!(
+                loading.join().unwrap().is_ok(),
+                "the caller still gets its result"
+            );
+        });
+        assert!(store.cached(&live).is_none());
     }
 
     #[test]
