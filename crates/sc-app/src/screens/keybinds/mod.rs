@@ -869,12 +869,22 @@ impl State {
             DeviceClass::Stick => format!(", bound to {}", inputs::stick_label(slot)),
             DeviceClass::Gamepad => String::new(),
         };
+        let said = format!("Heard {caps} on {}{bound_to}", heard.device.name);
         edit.slot = slot;
         edit.listening = false;
         edit.typed = heard.input;
         edit.note = note;
-        edit.heard = Some(format!("Heard {caps} on {}{bound_to}", heard.device.name));
-        self.stage(bind_op(&cell, input))
+        let staged = self.stage_op(bind_op(&cell, input));
+        match staged {
+            Ok(true) => {
+                if let Panel::Edit(edit) = &mut self.panel {
+                    edit.heard = Some(said);
+                }
+                Action::none()
+            }
+            Ok(false) => Action::none(),
+            Err(toast) => Action::toast(toast),
+        }
     }
 
     /// What the edited cell's input is checked against: the game's key names and the
@@ -962,19 +972,27 @@ impl State {
     }
 
     fn stage(&mut self, op: Op) -> Action<Message> {
+        match self.stage_op(op) {
+            Ok(_) => Action::none(),
+            Err(toast) => Action::toast(toast),
+        }
+    }
+
+    /// Whether the change was staged; a document that cannot be edited stages nothing.
+    fn stage_op(&mut self, op: Op) -> Result<bool, Toast> {
         let Doc::Ready {
             staged,
             writable: true,
         } = &mut self.doc
         else {
-            return Action::none();
+            return Ok(false);
         };
         match staged.stage(op) {
             Ok(()) => {
                 self.refresh();
-                Action::none()
+                Ok(true)
             }
-            Err(err) => Action::toast(Toast::error(format!(
+            Err(err) => Err(Toast::error(format!(
                 "Could not make that change: {}",
                 words(&err)
             ))),

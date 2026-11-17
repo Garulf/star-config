@@ -936,17 +936,36 @@ fn prompt(kind: DeviceKind) -> (&'static str, &'static str) {
     }
 }
 
+/// "1 stick" or "2 gamepads", by what the cell listens for.
+fn counted(kind: DeviceKind, n: usize) -> String {
+    let noun = if kind == DeviceKind::Gamepad {
+        "gamepad"
+    } else {
+        "stick"
+    };
+    let plural = if n == 1 { "" } else { "s" };
+    format!("{n} {noun}{plural}")
+}
+
+fn unreadable_line(kind: DeviceKind, unreadable: usize) -> String {
+    format!(
+        "Found {} that this app cannot read. {UNREADABLE_WHY}",
+        counted(kind, unreadable)
+    )
+}
+
 /// What the device reader found, in words, and whether anything is being read.
 fn reading(kind: DeviceKind, (found, unreadable): &(Vec<DeviceInfo>, usize)) -> (String, bool) {
     if !found.is_empty() {
         let names: Vec<&str> = found.iter().map(|device| device.name.as_str()).collect();
-        return (format!("Listening to: {}", names.join(", ")), true);
+        let mut line = format!("Listening to: {}", names.join(", "));
+        if *unreadable > 0 {
+            line.push_str(&format!("\n{}", unreadable_line(kind, *unreadable)));
+        }
+        return (line, true);
     }
     if *unreadable > 0 {
-        return (
-            format!("Found {unreadable} that this app cannot read. {UNREADABLE_WHY}"),
-            false,
-        );
+        return (unreadable_line(kind, *unreadable), false);
     }
     let devices = if kind == DeviceKind::Gamepad {
         "gamepads"

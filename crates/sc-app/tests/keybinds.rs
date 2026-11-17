@@ -2271,21 +2271,76 @@ fn unreadable_sticks_are_named_as_such() {
         DeviceKind::Joystick,
     );
     devices(&mut app, Vec::new(), 2);
-    assert!(has_containing(&app, "Found 2 that this app cannot read."));
+    assert!(has_containing(
+        &app,
+        "Found 2 sticks that this app cannot read."
+    ));
     #[cfg(target_os = "linux")]
     assert!(has_containing(
         &app,
-        "Found 2 that this app cannot read. Check that your user can read /dev/input."
+        "Found 2 sticks that this app cannot read. Check that your user can read /dev/input."
     ));
     #[cfg(not(target_os = "linux"))]
     {
         assert!(has_containing(
             &app,
-            "Found 2 that this app cannot read. Another program may be holding it."
+            "Found 2 sticks that this app cannot read. Another program may be holding it."
         ));
         assert!(!has_containing(&app, "/dev/input"));
     }
     assert!(!has_containing(&app, "No sticks found"));
+}
+
+#[test]
+fn one_unreadable_stick_is_singular() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, Vec::new(), 1);
+    assert!(has_containing(
+        &app,
+        "Found 1 stick that this app cannot read."
+    ));
+}
+
+#[test]
+fn unreadable_gamepads_are_named_as_gamepads() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Gamepad,
+    );
+    devices(&mut app, Vec::new(), 2);
+    assert!(has_containing(
+        &app,
+        "Found 2 gamepads that this app cannot read."
+    ));
+}
+
+#[test]
+fn unreadable_devices_are_counted_beside_the_listened_ones() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    select(
+        &mut app,
+        "spaceship_movement",
+        "v_pitch",
+        DeviceKind::Joystick,
+    );
+    devices(&mut app, vec![vkb_l()], 1);
+    assert!(has_containing(&app, "Listening to: VKB Gladiator NXT L"));
+    assert!(has_containing(
+        &app,
+        "Found 1 stick that this app cannot read."
+    ));
 }
 
 #[test]
