@@ -858,6 +858,36 @@ pub fn demo_game_files(ctx: &Context) {
     }
 }
 
+// Game data ----------------------------------------------------------------------
+
+fn game_data_sources() -> sc_core::defaults::Sources {
+    sc_core::defaults::Sources {
+        profile: include_str!("../tests/fixtures/game_data/defaultProfile.xml").into(),
+        attributes: include_str!("../tests/fixtures/game_data/attributes.xml").into(),
+        key_names: include_str!("../tests/fixtures/game_data/keybinding_localization.xml").into(),
+        strings: include_str!("../tests/fixtures/game_data/global.ini").into(),
+    }
+}
+
+/// Fills the game-data cache of every channel that reports a build, so a screen's load
+/// reads the small fixture defaults and no test needs a real `Data.p4k`. A channel without
+/// a `Data.p4k` gets a placeholder, which is never opened. The cache is stamped with the
+/// archive's size and date as they are now, so call this after [`demo_game_files`] and
+/// again after a channel's build changes.
+pub fn seed_game_data(ctx: &Context) {
+    let sources = game_data_sources();
+    for channel in &ctx.channels {
+        if channel.build_id().is_none() {
+            continue;
+        }
+        let p4k = channel.dir.join("Data.p4k");
+        if sc_core::install::resolve_ci(&channel.dir, "Data.p4k").is_none() {
+            fs::write(&p4k, b"placeholder, not a real Data.p4k").unwrap();
+        }
+        sc_core::defaults::seed_cache(channel, &ctx.dirs.game_data(), &sources).unwrap();
+    }
+}
+
 // Shader caches ------------------------------------------------------------------
 
 pub fn shader_cache_dir(temp: &Path) -> PathBuf {

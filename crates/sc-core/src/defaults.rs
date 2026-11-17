@@ -9,7 +9,9 @@ use std::path::Path;
 
 mod loader;
 
-pub use loader::{ATTRIBUTES, KEY_NAMES, PROFILE, Unavailable, from_archive, load, strings_entry};
+pub use loader::{
+    ATTRIBUTES, KEY_NAMES, PROFILE, Unavailable, from_archive, load, seed_cache, strings_entry,
+};
 
 const ACTION_PREFIXES: [&str; 2] = ["v_", "pc_"];
 

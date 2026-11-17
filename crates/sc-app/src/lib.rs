@@ -2,6 +2,7 @@ extern crate self as sc_app;
 
 pub mod app;
 pub mod context;
+pub mod game_data;
 pub mod icons;
 pub mod screen;
 pub mod screens;

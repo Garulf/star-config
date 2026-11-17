@@ -82,6 +82,25 @@ pub fn load(channel: &Channel, cache_root: &Path) -> Result<GameData, Unavailabl
     Ok(data)
 }
 
+/// Writes `sources` as the cache `load` accepts for the channel's current `Data.p4k` and build,
+/// so tests and tools can fill the cache without an archive. The file must exist; it is only
+/// stat-ed, never opened.
+pub fn seed_cache(channel: &Channel, cache_root: &Path, sources: &Sources) -> Result<(), Error> {
+    let p4k = resolve_ci(&channel.dir, "Data.p4k")
+        .ok_or_else(|| Error::NotFound(format!("{}/Data.p4k", channel.name)))?;
+    let build = channel
+        .build_id()
+        .ok_or_else(|| Error::Invalid(format!("{} has no build manifest", channel.name)))?;
+    let stamp = Stamp::of(&p4k, &build).map_err(|err| Error::io(&p4k, err))?;
+    let dir = build_dir(cache_root, channel, &build);
+    let partial = partial_dir(&dir);
+    let stored = store(&partial, &dir, &stamp, &chosen_language(channel), sources);
+    if stored.is_err() {
+        let _ = fs::remove_dir_all(&partial);
+    }
+    stored
+}
+
 /// For tools that read an archive directly, without a channel or the cache.
 pub fn from_archive(
     archive: &Archive,
@@ -665,6 +684,34 @@ mod tests {
         let data = install.load().unwrap();
         assert!(data.strings.is_empty());
         assert_eq!(data.maps.len(), 3);
+    }
+
+    #[test]
+    fn a_seeded_cache_loads_without_opening_the_archive() {
+        let install = Install::bare();
+        install.set_build("100");
+        fs::write(install.p4k(), b"placeholder, not an archive").unwrap();
+        let sources = Sources {
+            profile: fixture("defaultProfile.xml"),
+            attributes: fixture("attributes.xml"),
+            key_names: fixture("keybinding_localization.xml"),
+            strings: fixture("global.ini"),
+        };
+        seed_cache(&install.channel, &install.cache, &sources).unwrap();
+
+        let data = install.load().unwrap();
+        assert_eq!(data.build, "100");
+        assert_eq!(data.maps.len(), 3);
+        assert_eq!(pitch_up_label(&data), Some("Pitch up (ship)"));
+    }
+
+    #[test]
+    fn seeding_needs_an_archive_file_and_a_build() {
+        let install = Install::bare();
+        let sources = Sources::default();
+        assert!(seed_cache(&install.channel, &install.cache, &sources).is_err());
+        fs::write(install.p4k(), b"x").unwrap();
+        assert!(seed_cache(&install.channel, &install.cache, &sources).is_err());
     }
 
     #[test]

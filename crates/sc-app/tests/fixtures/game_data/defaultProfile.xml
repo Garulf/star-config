@@ -1,0 +1,60 @@
+<profile version="1" optionsVersion="2" rebindVersion="2">
+ <platforms>
+  <PC keyboard="1" mouse="1" gamepad="1" joystick="1"/>
+ </platforms>
+ <ActivationModes>
+  <ActivationMode name="tap" onPress="0" onHold="0" onRelease="1" multiTap="1"/>
+ </ActivationModes>
+ <CustomisationUIHeader>
+  <keyboard label="@ui_ResetToDefaults" description="@ui_KeyboardDefaultDesc" image="KeyboardDefault"/>
+  <joystick label="@ui_ResetToDefaults" description="@ui_JoystickDefaultDesc" image="JoystickDefault"/>
+ </CustomisationUIHeader>
+ <optiontree type="keyboard" name="root" UIShowInvert="-1" UIShowSensitivity="-1" UISensitivityMin="0.01" UISensitivityMax="6.25">
+  <optiongroup name="master" UILabel="@ui_CoMaster" UIShowSensitivity="0" UIShowInvert="0" UIShowCurve="0">
+   <optiongroup name="flight" UILabel="@ui_CoFlight" UIShowSensitivity="0" UIShowInvert="-1" UIShowCurve="-1">
+    <optiongroup name="flight_move_pitch" UILabel="@ui_CoFlightPitch" invert_cvar="cl_invertMouse" UIShowCurve="1" UIShowInvert="1"/>
+   </optiongroup>
+   <optiongroup name="fps_view_yaw" UILabel="@ui_CoFpsYaw" UIShowCurve="1" UIShowInvert="1"/>
+  </optiongroup>
+ </optiontree>
+ <optiontree type="gamepad" name="root" UIShowInvert="1" UIShowSensitivity="1" UISensitivityMin="0.01" UISensitivityMax="2.0">
+  <optiongroup name="master" UILabel="@ui_CoMaster" UIShowCurve="0" UIShowInvert="0">
+   <optiongroup name="fps_view" UILabel="@ui_CoFpsView" UIShowCurve="-1" UIShowInvert="-1">
+    <nonlinearity_curve>
+     <point in="0.1" out="0.015"/>
+     <point in="0.5" out="0.26"/>
+     <point in="0.9" out="0.78"/>
+    </nonlinearity_curve>
+    <optiongroup name="fps_view_pitch" UILabel="@ui_CoFpsPitch" invert_cvar="cl_invertController" UIShowCurve="1" UIShowInvert="1"/>
+   </optiongroup>
+  </optiongroup>
+ </optiontree>
+ <optiontree type="joystick" instances="8" name="root" UISensitivityMin="0.01" UISensitivityMax="2.0">
+  <optiongroup name="master" UILabel="@ui_CoMaster" UIShowCurve="0" UIShowInvert="0">
+   <optiongroup name="flight_move" UILabel="@ui_CoFlightMove" UIShowCurve="-1" UIShowInvert="-1">
+    <optiongroup name="flight_move_roll" UILabel="@ui_CoFlightRoll" invert="1" exponent="2" UIShowCurve="1" UIShowInvert="1"/>
+   </optiongroup>
+  </optiongroup>
+ </optiontree>
+ <actionmap name="seat_general" version="1" UILabel="@ui_CgSeatGeneral" UICategory="@ui_CcGeneral">
+  <action name="v_eject" activationMode="press" keyboard="ralt+y" joystick=" " UILabel="@ui_CiEject" UIDescription="@ui_CiEjectDesc"/>
+  <action name="v_look_behind" activationMode="delayed_hold" keyboard="comma" gamepad="shoulderl+a" UILabel="@ui_CiLookBehind"/>
+ </actionmap>
+ <actionmap name="spaceship_movement" version="2" UILabel="@ui_CgSpaceFlightMovement" UICategory="@ui_CcFlight">
+  <action name="v_pitch_up" activationMode="press" keyboard="down" joystick=" " optionGroup="flight_move_pitch" UILabel="@ui_CiPitchUp" UIDescription="@ui_CiPitchUpDesc"/>
+  <action name="v_pitch_down" activationMode="press" keyboard="up" mouse="maxis_y" UILabel="@ui_CiPitchDown"/>
+  <action name="v_roll_left" activationMode="press" UILabel="@ui_CiRollLeft">
+   <joystick>
+    <inputdata input="button3"/>
+    <inputdata input="button4"/>
+   </joystick>
+   <gamepad>
+    <inputdata input=" "/>
+   </gamepad>
+  </action>
+ </actionmap>
+ <actionmap name="ui_menu">
+  <action name="ui_back" keyboard="escape" gamepad="b" onPress="1"/>
+  <action name="ui_confirm" keyboard="" joystick="button2"/>
+ </actionmap>
+</profile>
