@@ -815,11 +815,11 @@ fn kind_name(kind: DeviceKind) -> &'static str {
         .map_or("device", |(name, _)| name)
 }
 
-fn is_bound(input: &str) -> bool {
+pub(crate) fn is_bound(input: &str) -> bool {
     !input.trim().is_empty() && parse_input(input).is_none_or(|(_, rest)| !rest.trim().is_empty())
 }
 
-fn clashes(pairs: &[(String, String)]) -> bool {
+pub(crate) fn clashes(pairs: &[(String, String)]) -> bool {
     pairs.iter().enumerate().any(|(i, (first, _))| {
         pairs[i + 1..].iter().any(|(second, _)| {
             first == second

@@ -1,6 +1,7 @@
 pub mod actionmaps;
 pub mod attributes;
 pub mod backup;
+pub mod binds;
 pub mod bundle;
 pub mod catalog;
 pub mod channels;
