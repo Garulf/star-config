@@ -1,5 +1,11 @@
 //! actionmaps.xml parsing and editing.
 
+mod options;
+
+pub use options::{
+    AxisField, AxisOption, DeviceOptions, GroupField, GroupOptions, GroupSetting, is_plain_number,
+};
+
 use crate::error::{Error, Result};
 use crate::staging::Document;
 use crate::xml_edit::{self, Attr, Element, Scan, line_at};
@@ -74,19 +80,70 @@ pub struct Conflict {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
+    /// Replaces every rebind of the input's device kind on the action with this one.
     Bind {
         map: String,
         action: String,
         input: String,
     },
-    Reset {
+    /// Like `Bind`, with the game's explicit unbind (`<prefix><n>_ `) as the input.
+    Unbind {
         map: String,
         action: String,
         slot: Slot,
     },
+    /// Removes every rebind of the kind, and the action and map when that leaves them empty.
+    Reset {
+        map: String,
+        action: String,
+        kind: DeviceKind,
+    },
     SwapJoysticks {
         a: u32,
         b: u32,
+    },
+    /// Sets one field of an option group, creating the `options` slot and the group element as needed.
+    /// The game keeps mouse groups in its keyboard slot, so `kind: Mouse` edits `type="keyboard"`,
+    /// as do the other group and curve ops.
+    SetGroup {
+        kind: DeviceKind,
+        instance: u32,
+        group: String,
+        field: GroupField,
+        value: String,
+    },
+    /// Removes the field, and the group element when that leaves it empty.
+    ResetGroup {
+        kind: DeviceKind,
+        instance: u32,
+        group: String,
+        field: GroupField,
+    },
+    /// Replaces the group's response curve with these `(in, out)` points, in the order given.
+    SetCurve {
+        kind: DeviceKind,
+        instance: u32,
+        group: String,
+        points: Vec<(String, String)>,
+    },
+    /// Removes the group's response curve, and the group element when that leaves it empty.
+    ResetCurve {
+        kind: DeviceKind,
+        instance: u32,
+        group: String,
+    },
+    /// Sets the value on every line of the device that carries it, or adds the line.
+    SetAxis {
+        product: String,
+        input: String,
+        field: AxisField,
+        value: String,
+    },
+    /// Removes the value from every line that carries it, and each line and device left empty.
+    ResetAxis {
+        product: String,
+        input: String,
+        field: AxisField,
     },
 }
 
@@ -100,6 +157,8 @@ pub struct ActionMaps {
     devices: Vec<Device>,
     maps: Vec<String>,
     bindings: Vec<Binding>,
+    device_options: Vec<DeviceOptions>,
+    group_options: Vec<GroupOptions>,
 }
 
 impl ActionMaps {
@@ -127,6 +186,24 @@ impl ActionMaps {
 
     pub fn bindings(&self) -> &[Binding] {
         &self.bindings
+    }
+
+    pub fn binds_of(&self, map: &str, action: &str, kind: DeviceKind) -> Vec<&Binding> {
+        self.bindings
+            .iter()
+            .filter(|b| b.map == map && b.action == action)
+            .filter(|b| b.slot.is_some_and(|slot| slot.kind == kind))
+            .collect()
+    }
+
+    /// Per-axis deadzone, saturation and acceleration, one entry per `deviceoptions` product.
+    pub fn device_options(&self) -> &[DeviceOptions] {
+        &self.device_options
+    }
+
+    /// Per-slot option group overrides, one entry per `options` element.
+    pub fn group_options(&self) -> &[GroupOptions] {
+        &self.group_options
     }
 
     pub fn conflicts(&self) -> Vec<Conflict> {
@@ -170,6 +247,8 @@ impl ActionMaps {
         }
         Ok(Self {
             kind: tree.kind,
+            device_options: options::read_device_options(&tree),
+            group_options: options::read_group_options(&tree),
             path,
             bom,
             text,
@@ -182,10 +261,66 @@ impl ActionMaps {
 
     fn edited(&self, op: &Op) -> Result<String> {
         let mut text = self.text.clone();
+        let path = &self.path;
         match op {
-            Op::Bind { map, action, input } => bind(&self.path, &mut text, map, action, input)?,
-            Op::Reset { map, action, slot } => reset(&self.path, &mut text, map, action, *slot)?,
-            Op::SwapJoysticks { a, b } => swap_joysticks(&self.path, &mut text, *a, *b)?,
+            Op::Bind { map, action, input } => bind(path, &mut text, map, action, input)?,
+            Op::Unbind { map, action, slot } => unbind(path, &mut text, map, action, *slot)?,
+            Op::Reset { map, action, kind } => reset(path, &mut text, map, action, *kind)?,
+            Op::SwapJoysticks { a, b } => swap_joysticks(path, &mut text, *a, *b)?,
+            Op::SetGroup {
+                kind,
+                instance,
+                group,
+                field,
+                value,
+            } => options::set_group(
+                path,
+                &mut text,
+                option_slot(*kind, *instance),
+                group,
+                *field,
+                value,
+            )?,
+            Op::ResetGroup {
+                kind,
+                instance,
+                group,
+                field,
+            } => options::reset_group(
+                path,
+                &mut text,
+                option_slot(*kind, *instance),
+                group,
+                *field,
+            )?,
+            Op::SetCurve {
+                kind,
+                instance,
+                group,
+                points,
+            } => options::set_curve(
+                path,
+                &mut text,
+                option_slot(*kind, *instance),
+                group,
+                points,
+            )?,
+            Op::ResetCurve {
+                kind,
+                instance,
+                group,
+            } => options::reset_curve(path, &mut text, option_slot(*kind, *instance), group)?,
+            Op::SetAxis {
+                product,
+                input,
+                field,
+                value,
+            } => options::set_axis(path, &mut text, product, input, *field, value)?,
+            Op::ResetAxis {
+                product,
+                input,
+                field,
+            } => options::reset_axis(path, &mut text, product, input, *field)?,
         }
         Ok(text)
     }
@@ -226,6 +361,14 @@ impl Document for ActionMaps {
     }
 }
 
+fn option_slot(kind: DeviceKind, instance: u32) -> Slot {
+    let kind = match kind {
+        DeviceKind::Mouse => DeviceKind::Keyboard,
+        other => other,
+    };
+    Slot { kind, instance }
+}
+
 pub fn parse_input(input: &str) -> Option<(Slot, &str)> {
     let (head, rest) = input.split_once('_')?;
     let (kind, digits) = PREFIXES
@@ -246,6 +389,10 @@ pub fn format_input(slot: Slot, rest: &str) -> String {
     format!("{prefix}{}_{rest}", slot.instance)
 }
 
+pub fn is_unbind(input: &str) -> bool {
+    parse_input(input).is_some_and(|(_, rest)| rest == " ")
+}
+
 pub fn layout_file_name(name: &str) -> Result<String> {
     let name = name.trim();
     let allowed = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_');
@@ -258,17 +405,52 @@ pub fn layout_file_name(name: &str) -> Result<String> {
 }
 
 fn bind(path: &Path, text: &mut String, map: &str, action: &str, input: &str) -> Result<()> {
-    check_name(map)?;
-    check_name(action)?;
     let Some((slot, rest)) = parse_input(input) else {
         return Err(Error::Invalid(format!(
             "{input:?} does not start with a device prefix such as kb1_ or js1_"
         )));
     };
     if rest.trim().is_empty() {
-        return Err(Error::Invalid("unbinding is not supported yet".into()));
+        return Err(Error::Invalid("use Unbind to clear a binding".into()));
     }
+    replace_kind(
+        path,
+        text,
+        map,
+        action,
+        slot.kind,
+        input,
+        Keep::OtherAttributes,
+    )
+}
 
+fn unbind(path: &Path, text: &mut String, map: &str, action: &str, slot: Slot) -> Result<()> {
+    let input = format_input(slot, " ");
+    if !is_unbind(&input) {
+        return Err(Error::Invalid(format!(
+            "{input:?} is not a usable device prefix"
+        )));
+    }
+    replace_kind(path, text, map, action, slot.kind, &input, Keep::Nothing)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Keep {
+    OtherAttributes,
+    Nothing,
+}
+
+fn replace_kind(
+    path: &Path,
+    text: &mut String,
+    map: &str,
+    action: &str,
+    kind: DeviceKind,
+    input: &str,
+    keep: Keep,
+) -> Result<()> {
+    check_name(map)?;
+    check_name(action)?;
     let tree = Tree::check(path, text)?;
     if tree.find_map(map).is_none() {
         let element = tree.element(tree.container);
@@ -279,13 +461,21 @@ fn bind(path: &Path, text: &mut String, map: &str, action: &str, input: &str) ->
     if tree.find_action(map_index, action).is_none() {
         xml_edit::append_child(text, tree.element(map_index), &named(ACTION, action));
     }
+    match keep {
+        Keep::OtherAttributes => remove_rebinds_after_first(path, text, map, action, kind)?,
+        Keep::Nothing => remove_rebinds(path, text, map, action, kind).map(drop)?,
+    }
+
     let tree = Tree::check(path, text)?;
-    let map_index = tree.find_map(map).ok_or_else(|| not_added(MAP, map))?;
     let action_index = tree
-        .find_action(map_index, action)
+        .find_map(map)
+        .and_then(|map_index| tree.find_action(map_index, action))
         .ok_or_else(|| not_added(ACTION, action))?;
-    match tree.find_rebind(action_index, slot) {
-        Some((_, attr)) => xml_edit::set_attr(text, attr, input),
+    match tree
+        .find_rebind(action_index, kind)
+        .and_then(|rebind| attr(tree.element(rebind), INPUT))
+    {
+        Some(existing) => xml_edit::set_attr(text, existing, input),
         None => {
             let rebind = format!("<{REBIND} {INPUT}=\"{}\"/>", xml_edit::escape_attr(input));
             xml_edit::append_child(text, tree.element(action_index), &rebind);
@@ -294,21 +484,59 @@ fn bind(path: &Path, text: &mut String, map: &str, action: &str, input: &str) ->
     Ok(())
 }
 
-fn reset(path: &Path, text: &mut String, map: &str, action: &str, slot: Slot) -> Result<()> {
+fn remove_rebinds_after_first(
+    path: &Path,
+    text: &mut String,
+    map: &str,
+    action: &str,
+    kind: DeviceKind,
+) -> Result<()> {
+    loop {
+        let tree = Tree::check(path, text)?;
+        let Some(action_index) = tree
+            .find_map(map)
+            .and_then(|map_index| tree.find_action(map_index, action))
+        else {
+            return Ok(());
+        };
+        let Some(second) = tree.rebinds_of(action_index, kind).nth(1) else {
+            return Ok(());
+        };
+        xml_edit::remove_element(text, tree.element(second));
+    }
+}
+
+fn remove_rebinds(
+    path: &Path,
+    text: &mut String,
+    map: &str,
+    action: &str,
+    kind: DeviceKind,
+) -> Result<usize> {
+    let mut removed = 0;
+    loop {
+        let tree = Tree::check(path, text)?;
+        let Some(rebind) = tree
+            .find_map(map)
+            .and_then(|map_index| tree.find_action(map_index, action))
+            .and_then(|action_index| tree.find_rebind(action_index, kind))
+        else {
+            return Ok(removed);
+        };
+        xml_edit::remove_element(text, tree.element(rebind));
+        removed += 1;
+    }
+}
+
+fn reset(path: &Path, text: &mut String, map: &str, action: &str, kind: DeviceKind) -> Result<()> {
     check_name(map)?;
     check_name(action)?;
-    let tree = Tree::check(path, text)?;
-    let (rebind, _) = tree
-        .find_map(map)
-        .and_then(|map_index| tree.find_action(map_index, action))
-        .and_then(|action_index| tree.find_rebind(action_index, slot))
-        .ok_or_else(|| {
-            Error::Invalid(format!(
-                "{map}/{action} has no binding for {}",
-                format_input(slot, "")
-            ))
-        })?;
-    xml_edit::remove_element(text, tree.element(rebind));
+    if remove_rebinds(path, text, map, action, kind)? == 0 {
+        return Err(Error::Invalid(format!(
+            "{map}/{action} has no {} binding",
+            kind_name(kind)
+        )));
+    }
 
     let tree = Tree::check(path, text)?;
     let Some(map_index) = tree.find_map(map) else {
@@ -530,11 +758,15 @@ impl Tree {
             .find(|&index| attr_value(self.element(index), "name") == Some(name))
     }
 
-    fn find_rebind(&self, action: usize, slot: Slot) -> Option<(usize, &Attr)> {
-        self.children[action].iter().find_map(|&index| {
-            let input = attr(self.element(index), INPUT)?;
-            let (found, _) = parse_input(&input.value)?;
-            (found == slot).then_some((index, input))
+    fn find_rebind(&self, action: usize, kind: DeviceKind) -> Option<usize> {
+        self.rebinds_of(action, kind).next()
+    }
+
+    fn rebinds_of(&self, action: usize, kind: DeviceKind) -> impl Iterator<Item = usize> + '_ {
+        self.children[action].iter().copied().filter(move |&index| {
+            attr_value(self.element(index), INPUT)
+                .and_then(parse_input)
+                .is_some_and(|(slot, _)| slot.kind == kind)
         })
     }
 }
@@ -571,11 +803,18 @@ fn binding(map: &str, action: &str, rebind: &Element) -> Binding {
     }
 }
 
-fn is_bound(input: &str) -> bool {
+fn kind_name(kind: DeviceKind) -> &'static str {
+    OPTION_TYPES
+        .iter()
+        .find(|(_, found)| *found == kind)
+        .map_or("device", |(name, _)| name)
+}
+
+pub(crate) fn is_bound(input: &str) -> bool {
     !input.trim().is_empty() && parse_input(input).is_none_or(|(_, rest)| !rest.trim().is_empty())
 }
 
-fn clashes(pairs: &[(String, String)]) -> bool {
+pub(crate) fn clashes(pairs: &[(String, String)]) -> bool {
     pairs.iter().enumerate().any(|(i, (first, _))| {
         pairs[i + 1..].iter().any(|(second, _)| {
             first == second
@@ -625,11 +864,13 @@ mod tests {
 
     use DeviceKind::{Gamepad, Joystick, Keyboard, Mouse};
 
-    const RECOGNISED: [&str; 4] = [
+    const RECOGNISED: [&str; 6] = [
         "profile.xml",
         "layout.xml",
         "two_profiles.xml",
         "unknown_bits.xml",
+        "real_profile.xml",
+        "real_layout.xml",
     ];
 
     fn fixture(name: &str) -> Vec<u8> {
@@ -669,11 +910,19 @@ mod tests {
         }
     }
 
-    fn reset(map: &str, action: &str, slot: Slot) -> Op {
-        Op::Reset {
+    fn unbind(map: &str, action: &str, slot: Slot) -> Op {
+        Op::Unbind {
             map: map.into(),
             action: action.into(),
             slot,
+        }
+    }
+
+    fn reset(map: &str, action: &str, kind: DeviceKind) -> Op {
+        Op::Reset {
+            map: map.into(),
+            action: action.into(),
+            kind,
         }
     }
 
@@ -962,7 +1211,7 @@ mod tests {
     }
 
     #[test]
-    fn bind_replaces_same_slot_input_and_keeps_other_attributes() {
+    fn bind_keeps_the_other_attributes_of_the_rebind_it_replaces() {
         let original = fixture_text("profile.xml");
         let mut doc = doc("profile.xml");
         doc.apply(&bind(
@@ -975,8 +1224,8 @@ mod tests {
             text(&doc.to_bytes()),
             replaced_once(
                 &original,
-                "\"kb1_lalt+c\" multiTap",
-                "\"kb1_lalt+d\" multiTap"
+                "\"kb1_lalt+c\" multiTap=\"2\"/>",
+                "\"kb1_lalt+d\" multiTap=\"2\"/>"
             )
         );
         let edited = doc
@@ -985,6 +1234,16 @@ mod tests {
             .find(|b| b.action == "v_toggle_decoupled")
             .unwrap();
         assert_eq!(edited.extra, [("multiTap".into(), "2".into())]);
+
+        let mut again = doc.clone();
+        again
+            .apply(&bind(
+                "spaceship_movement",
+                "v_toggle_decoupled",
+                "kb1_lalt+d",
+            ))
+            .unwrap();
+        assert_eq!(again.to_bytes(), doc.to_bytes());
 
         let edited = applied(
             "profile.xml",
@@ -997,7 +1256,7 @@ mod tests {
     }
 
     #[test]
-    fn bind_adds_rebind_for_a_new_slot() {
+    fn bind_adds_rebind_for_a_new_kind() {
         let original = fixture_text("profile.xml");
         let row = "    <rebind input=\"kb1_lctrl\"/>\r\n";
         assert_eq!(
@@ -1069,7 +1328,7 @@ mod tests {
         let mut doc = doc("profile.xml");
         for blank in ["js1_", "js1_  ", "kb1_\t"] {
             let message = invalid(&mut doc, bind("spaceship_movement", "v_afterburner", blank));
-            assert_eq!(message, "unbinding is not supported yet");
+            assert_eq!(message, "use Unbind to clear a binding");
         }
         for bad in ["button5", "", "js0_button1", " js1_button1"] {
             invalid(&mut doc, bind("spaceship_movement", "v_afterburner", bad));
@@ -1084,11 +1343,13 @@ mod tests {
         ] {
             invalid(&mut doc, bind(bad, "v_afterburner", "kb1_x"));
             invalid(&mut doc, bind("spaceship_movement", bad, "kb1_x"));
-            invalid(&mut doc, reset(bad, "v_afterburner", slot(Joystick, 1)));
+            invalid(&mut doc, unbind(bad, "v_afterburner", slot(Joystick, 1)));
             invalid(
                 &mut doc,
-                reset("spaceship_movement", bad, slot(Joystick, 1)),
+                unbind("spaceship_movement", bad, slot(Joystick, 1)),
             );
+            invalid(&mut doc, reset(bad, "v_afterburner", Joystick));
+            invalid(&mut doc, reset("spaceship_movement", bad, Joystick));
         }
     }
 
@@ -1097,21 +1358,13 @@ mod tests {
         let original = fixture_text("profile.xml");
         let mut doc = doc("profile.xml");
 
-        doc.apply(&reset(
-            "spaceship_movement",
-            "v_strafe_up",
-            slot(Joystick, 2),
-        ))
-        .unwrap();
+        doc.apply(&reset("spaceship_movement", "v_strafe_up", Joystick))
+            .unwrap();
         let step1 = replaced_once(&original, "    <rebind input=\"js2_button5\"/>\r\n", "");
         assert_eq!(text(&doc.to_bytes()), step1);
 
-        doc.apply(&reset(
-            "spaceship_targeting",
-            "v_target_pin",
-            slot(Joystick, 2),
-        ))
-        .unwrap();
+        doc.apply(&reset("spaceship_targeting", "v_target_pin", Joystick))
+            .unwrap();
         let step2 = replaced_once(
             &step1,
             "   <action name=\"v_target_pin\">\r\n    <rebind input=\"js2_hat1_up\"/>\r\n   </action>\r\n",
@@ -1122,13 +1375,13 @@ mod tests {
         doc.apply(&reset(
             "spaceship_targeting",
             "v_target_cycle_all_fwd",
-            slot(Mouse, 1),
+            Mouse,
         ))
         .unwrap();
         doc.apply(&reset(
             "spaceship_targeting",
             "v_target_cycle_all_fwd",
-            slot(Joystick, 3),
+            Joystick,
         ))
         .unwrap();
         let step3 = replaced_once(
@@ -1145,19 +1398,271 @@ mod tests {
         let mut doc = doc("profile.xml");
         invalid(
             &mut doc,
-            reset("spaceship_movement", "v_afterburner", slot(Joystick, 2)),
+            reset("spaceship_movement", "v_afterburner", Mouse),
         );
+        invalid(&mut doc, reset("spaceship_movement", "v_missing", Joystick));
+        invalid(&mut doc, reset("missing_map", "v_afterburner", Joystick));
         invalid(
             &mut doc,
-            reset("spaceship_movement", "v_missing", slot(Joystick, 1)),
+            reset("spaceship_movement", "v_afterburner", Keyboard),
         );
+    }
+
+    fn binds_of_action(doc: &ActionMaps, map: &str, action: &str, kind: DeviceKind) -> Vec<String> {
+        doc.binds_of(map, action, kind)
+            .iter()
+            .map(|b| b.input.clone())
+            .collect()
+    }
+
+    #[test]
+    fn real_fixtures_round_trip_byte_for_byte() {
+        for name in ["real_profile.xml", "real_layout.xml"] {
+            let bytes = fixture(name);
+            assert_eq!(parse(&bytes).unwrap().to_bytes(), bytes, "{name}");
+        }
+        let profile = doc("real_profile.xml");
+        assert_eq!(profile.kind(), FileKind::Profile);
+        assert_eq!(profile.bindings().len(), 14);
+        let layout = doc("real_layout.xml");
+        assert_eq!(layout.kind(), FileKind::Layout);
+        assert_eq!(layout.bindings().len(), 9);
+    }
+
+    #[test]
+    fn bind_replaces_every_rebind_of_the_same_kind() {
+        let original = fixture_text("real_layout.xml");
+        let mut doc = doc("real_layout.xml");
+        doc.apply(&bind(
+            "spaceship_weapons",
+            "v_attack1_group1",
+            "js4_button3",
+        ))
+        .unwrap();
+        assert_eq!(
+            text(&doc.to_bytes()),
+            replaced_once(
+                &original,
+                "   <rebind input=\"js1_button1\"/>\r\n   <rebind input=\"js2_ \"/>\r\n",
+                "   <rebind input=\"js4_button3\"/>\r\n"
+            )
+        );
+        assert_eq!(
+            binds_of_action(&doc, "spaceship_weapons", "v_attack1_group1", Joystick),
+            ["js4_button3"]
+        );
+        assert_eq!(
+            binds_of_action(&doc, "spaceship_weapons", "v_attack1_group1", Keyboard),
+            ["kb1_space"]
+        );
+    }
+
+    #[test]
+    fn bind_leaves_inputs_without_a_device_prefix_alone() {
+        let mut doc = parse(&profile_with_maps(
+            "  <actionmap name=\"m\">\n   <action name=\"a\">\n    <rebind input=\"button5\"/>\n    <rebind input=\"js1_x\"/>\n   </action>\n  </actionmap>\n",
+        ))
+        .unwrap();
+        doc.apply(&bind("m", "a", "js2_y")).unwrap();
+        let inputs: Vec<_> = doc.bindings().iter().map(|b| b.input.as_str()).collect();
+        assert_eq!(inputs, ["button5", "js2_y"]);
+    }
+
+    #[test]
+    fn bind_accepts_mouse_button_in_keyboard_kind() {
+        let original = fixture_text("real_profile.xml");
+        let mut doc = doc("real_profile.xml");
+        doc.apply(&bind(
+            "seat_general",
+            "v_operator_mode_cycle_forward",
+            "kb1_mouse3",
+        ))
+        .unwrap();
+        assert_eq!(
+            text(&doc.to_bytes()),
+            replaced_once(&original, "\"kb1_ \"/>", "\"kb1_mouse3\"/>")
+        );
+        let keyboard = doc.binds_of("seat_general", "v_operator_mode_cycle_forward", Keyboard);
+        assert_eq!(keyboard.len(), 1);
+        assert_eq!(keyboard[0].input, "kb1_mouse3");
+        assert_eq!(keyboard[0].slot, Some(slot(Keyboard, 1)));
+        assert!(
+            doc.binds_of("seat_general", "v_operator_mode_cycle_forward", Mouse)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn bind_keeps_a_joystick_bind_when_the_new_one_is_a_keyboard_key() {
+        let original = fixture_text("real_profile.xml");
+        let row = "    <rebind input=\"js4_button21\"/>\r\n";
+        assert_eq!(
+            applied(
+                "real_profile.xml",
+                bind("seat_general", "v_set_flight_mode", "kb1_mouse3")
+            ),
+            replaced_once(
+                &original,
+                row,
+                &format!("{row}    <rebind input=\"kb1_mouse3\"/>\r\n")
+            )
+        );
+    }
+
+    #[test]
+    fn unbind_writes_prefix_and_one_space() {
+        let original = fixture_text("real_profile.xml");
+        let mut doc = doc("real_profile.xml");
+        doc.apply(&unbind(
+            "seat_general",
+            "v_set_flight_mode",
+            slot(Joystick, 1),
+        ))
+        .unwrap();
+        assert_eq!(
+            text(&doc.to_bytes()),
+            replaced_once(
+                &original,
+                "    <rebind input=\"js4_button21\"/>\r\n",
+                "    <rebind input=\"js1_ \"/>\r\n"
+            )
+        );
+        let binds = doc.binds_of("seat_general", "v_set_flight_mode", Joystick);
+        assert_eq!(binds.len(), 1);
+        assert_eq!(binds[0].input, "js1_ ");
+        assert!(is_unbind(&binds[0].input));
+
+        let layout = applied(
+            "real_layout.xml",
+            unbind("spaceship_weapons", "v_attack1_group1", slot(Keyboard, 1)),
+        );
+        assert!(layout.contains("   <rebind input=\"kb1_ \"/>\r\n"));
+        assert!(!layout.contains("kb1_space"));
+    }
+
+    #[test]
+    fn unbind_creates_the_action_when_the_file_has_none() {
+        let layout = applied(
+            "real_layout.xml",
+            unbind("vehicle_general", "v_horn", slot(Mouse, 1)),
+        );
+        assert!(layout.contains(
+            " <actionmap name=\"vehicle_general\">\r\n  <action name=\"v_horn\">\r\n   <rebind input=\"mo1_ \"/>\r\n  </action>\r\n </actionmap>\r\n</ActionMaps>"
+        ));
+    }
+
+    #[test]
+    fn unbind_rejects_instance_zero() {
+        let mut doc = doc("real_profile.xml");
         invalid(
             &mut doc,
-            reset("missing_map", "v_afterburner", slot(Joystick, 1)),
+            unbind("seat_general", "v_eject", slot(Joystick, 0)),
         );
-        invalid(
-            &mut doc,
-            reset("spaceship_movement", "v_afterburner", slot(Keyboard, 1)),
+    }
+
+    #[test]
+    fn is_unbind_means_a_prefix_and_one_space() {
+        for unbound in ["kb1_ ", "js2_ ", "mo1_ ", "gp1_ "] {
+            assert!(is_unbind(unbound), "{unbound:?}");
+        }
+        for bound in [
+            "js1_button1",
+            "kb1_mouse3",
+            "js1_",
+            "",
+            " ",
+            "button1",
+            "js1_  ",
+        ] {
+            assert!(!is_unbind(bound), "{bound:?}");
+        }
+    }
+
+    #[test]
+    fn binds_of_picks_one_action_and_kind() {
+        let doc = doc("real_profile.xml");
+        assert_eq!(
+            binds_of_action(
+                &doc,
+                "spaceship_salvage",
+                "v_salvage_cycle_modifiers_focused",
+                Keyboard
+            ),
+            ["kb1_mouse3"]
+        );
+        assert_eq!(
+            binds_of_action(
+                &doc,
+                "spaceship_salvage",
+                "v_salvage_cycle_modifiers_focused",
+                Joystick
+            ),
+            ["js1_button15"]
+        );
+        assert_eq!(
+            binds_of_action(&doc, "spaceship_movement", "v_roll_right", Mouse),
+            ["mo1_ "]
+        );
+        assert_eq!(
+            binds_of_action(
+                &doc,
+                "spaceship_movement",
+                "v_toggle_landing_system",
+                Gamepad
+            ),
+            ["gp1_ "]
+        );
+        assert!(doc.binds_of("seat_general", "v_eject", Gamepad).is_empty());
+        assert!(doc.binds_of("no_such_map", "v_eject", Keyboard).is_empty());
+        assert!(
+            doc.binds_of("seat_general", "no_such_action", Keyboard)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn reset_removes_all_of_a_kind_and_empty_parents() {
+        let original = fixture_text("real_layout.xml");
+        let mut doc = doc("real_layout.xml");
+
+        doc.apply(&reset("spaceship_weapons", "v_attack1_group1", Joystick))
+            .unwrap();
+        let step1 = replaced_once(
+            &original,
+            "   <rebind input=\"js1_button1\"/>\r\n   <rebind input=\"js2_ \"/>\r\n",
+            "",
+        );
+        assert_eq!(text(&doc.to_bytes()), step1);
+
+        doc.apply(&reset("spaceship_weapons", "v_attack1_group1", Keyboard))
+            .unwrap();
+        let step2 = replaced_once(
+            &step1,
+            "  <action name=\"v_attack1_group1\">\r\n   <rebind input=\"kb1_space\"/>\r\n  </action>\r\n",
+            "",
+        );
+        assert_eq!(text(&doc.to_bytes()), step2);
+
+        doc.apply(&reset("spaceship_weapons", "v_attack_group2", Joystick))
+            .unwrap();
+        let step3 = replaced_once(
+            &step2,
+            " <actionmap name=\"spaceship_weapons\">\r\n  <action name=\"v_attack_group2\">\r\n   <rebind input=\"js1_button6\"/>\r\n  </action>\r\n </actionmap>\r\n",
+            "",
+        );
+        assert_eq!(text(&doc.to_bytes()), step3);
+        assert_eq!(doc.maps(), ["spaceship_movement", "spaceship_power"]);
+    }
+
+    #[test]
+    fn reset_of_one_kind_keeps_the_others() {
+        let original = fixture_text("real_profile.xml");
+        assert_eq!(
+            applied(
+                "real_profile.xml",
+                reset("spaceship_movement", "v_roll_right", Mouse)
+            ),
+            replaced_once(&original, "    <rebind input=\"mo1_ \"/>\r\n", "")
         );
     }
 
@@ -1228,15 +1733,16 @@ mod tests {
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n",
             "  <futureThing mode=\"x\">\n   <child value=\"1\"/>\n  </futureThing>\n",
             "<action name=\"v_afterburner\" activationMode=\"hold\">\n    <!-- tuned for the stick -->\n",
-            "\" curve=\"soft\"/>\n",
         ];
+        let untouched_rebind = "<rebind input=\"js1_button3\" curve=\"soft\"/>\n";
         let ops = [
             bind("spaceship_movement", "v_afterburner", "js1_button4"),
             bind("spaceship_movement", "v_afterburner", "mo1_mouse1"),
             bind("spaceship_movement", "v_brake", "kb1_b"),
             bind("vehicle_general", "v_horn", "kb1_h"),
-            reset("spaceship_movement", "v_afterburner", slot(Keyboard, 1)),
-            reset("spaceship_weapons", "v_attack1", slot(Joystick, 2)),
+            reset("spaceship_movement", "v_afterburner", Keyboard),
+            reset("spaceship_weapons", "v_attack1", Joystick),
+            unbind("spaceship_movement", "v_afterburner", slot(Keyboard, 1)),
             swap(1, 2),
         ];
         for op in ops {
@@ -1252,6 +1758,13 @@ mod tests {
             ),
             replaced_once(&original, "\"js1_button3\"", "\"js1_button4\"")
         );
+        assert!(
+            applied(
+                "unknown_bits.xml",
+                bind("spaceship_movement", "v_afterburner", "kb1_g")
+            )
+            .contains(untouched_rebind)
+        );
 
         let original = fixture_text("two_profiles.xml");
         let other_profile = &original[..original.find(" <ActionProfiles version=\"1\" optionsVersion=\"2\" rebindVersion=\"2\" profileName=\"default\">").unwrap()];
@@ -1260,7 +1773,7 @@ mod tests {
             swap(1, 2),
             bind("spaceship_movement", "v_afterburner", "js1_button4"),
             bind("spaceship_movement", "v_new", "js1_button4"),
-            reset("spaceship_movement", "v_afterburner", slot(Joystick, 1)),
+            reset("spaceship_movement", "v_afterburner", Joystick),
         ] {
             let edited = applied("two_profiles.xml", op.clone());
             assert!(edited.starts_with(other_profile), "{op:?}");

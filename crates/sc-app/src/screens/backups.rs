@@ -157,6 +157,7 @@ impl State {
             Message::Restore(id) => self.restore(id, ctx),
             Message::Restored(origin, result) => {
                 self.busy = false;
+                ctx.game_data().forget(&origin.channel);
                 let toast = match result {
                     Ok((before, done)) => {
                         Toast::success(done).with_undo_in(vec![origin.undo(before)])
@@ -717,6 +718,20 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn a_restore_drops_the_channels_game_data() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = crate::testkit::demo_base(temp.path());
+        crate::testkit::demo_game_files(&ctx);
+        crate::testkit::seed_game_data(&ctx);
+        let live = ctx.channel.clone().unwrap();
+        let store = ctx.game_data();
+        let _ = store.load(&live, &ctx.dirs.game_data());
+        let origin = Origin::of(&ctx).unwrap();
+        let _ = State::new().update(Message::Restored(origin, Err("x".into())), &ctx);
+        assert!(store.cached(&live).is_none());
     }
 
     #[test]

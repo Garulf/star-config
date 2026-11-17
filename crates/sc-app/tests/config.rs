@@ -9,6 +9,7 @@ use sc_app::app::{self, App, Message};
 use sc_app::screen::Screen;
 use sc_app::screens::config::{self, Tab};
 use sc_core::backup::BackupStore;
+use sc_core::defaults::Unavailable;
 use sc_core::install::Channel;
 use sc_core::settings::ThemeChoice;
 use std::fs;
@@ -572,4 +573,355 @@ fn a_failed_apply_that_returns_after_a_reload_says_the_edits_were_dropped() {
         "The changes were not applied, and the files were loaded again meanwhile, so your edits were dropped."
     );
     assert_eq!(app.pending(Screen::Config), 0);
+}
+
+const GAME_ATTRIBUTES: &str = include_str!("fixtures/config_game/attributes.xml");
+const GAME_STRINGS: &str = include_str!("fixtures/config_game/global.ini");
+const TALL: Size = Size::new(1280.0, 3200.0);
+
+fn game_fixture_with(
+    user_cfg: Option<&str>,
+    attributes: &[(&str, &str)],
+    (build, theme): (&str, ThemeChoice),
+) -> Fixture {
+    let temp = tempfile::tempdir().unwrap();
+    let mut ctx = testkit::context_with_channels(temp.path(), &["LIVE"]);
+    ctx.settings.theme = theme;
+    let channel = ctx.channel.clone().unwrap();
+    testkit::write_build(&channel, "4.1.0", "1234");
+    testkit::seed_game_data_with(&ctx, build, GAME_STRINGS);
+    let entries: Vec<(String, String)> = attributes
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect();
+    testkit::write_channel_files(
+        &channel,
+        user_cfg.map(str::as_bytes),
+        Some(testkit::attributes_xml(&entries).as_bytes()),
+    );
+    let mut app = App::with(ctx);
+    feed(
+        &mut app,
+        [
+            Message::Navigate(Screen::Config),
+            Message::Config(config::Message::Tab(Tab::Game)),
+        ],
+    );
+    Fixture {
+        _temp: temp,
+        app,
+        channel,
+    }
+}
+
+fn game_fixture(user_cfg: Option<&str>, attributes: &[(&str, &str)]) -> Fixture {
+    game_fixture_with(user_cfg, attributes, (GAME_ATTRIBUTES, ThemeChoice::Dark))
+}
+
+/// Every row at once: the list builds only the rows that fit the window.
+fn on_tall(app: &App, needle: &str) -> bool {
+    Simulator::with_size(sc_app::settings(), TALL, app.view())
+        .find(needle)
+        .is_ok()
+}
+
+const YOUR_FILE: [(&str, &str); 4] = [
+    ("FieldOfView", "90"),
+    ("HeadtrackingGlobalSmoothingPosition", "0.35"),
+    ("AudioMusicVolume", "0.4"),
+    ("OldMouseCurve", "3"),
+];
+
+#[test]
+fn every_game_setting_is_listed_once() {
+    let fx = game_fixture(None, &YOUR_FILE);
+    let build_names = [
+        "HeadtrackingSource",
+        "HeadtrackingToggle",
+        "HeadtrackingGlobalSmoothingPosition",
+        "HeadtrackingInactivityTime",
+        "HeadtrackingDisableDuringWalking",
+        "HeadtrackingThirdPersonCameraToggle",
+        "FieldOfView",
+        "AudioMasterVolume",
+        "AudioMusicVolume",
+        "ShowHints",
+        "ChromaticAberration",
+        "MouseSensitivity",
+        "Language",
+        "OldMouseCurve",
+    ];
+    for name in build_names {
+        assert!(on_tall(&fx.app, name), "{name} is not listed");
+    }
+    assert!(
+        on_tall(&fx.app, "14 settings"),
+        "13 of the build plus 1 stale"
+    );
+}
+
+#[test]
+fn placed_settings_use_in_game_labels() {
+    let fx = game_fixture(None, &YOUR_FILE);
+    for text in [
+        "Tracking device",
+        "Smoothing of position",
+        "Idle time before reset",
+    ] {
+        assert!(on_tall(&fx.app, text), "{text}");
+    }
+    assert!(
+        !on_tall(&fx.app, "Source"),
+        "the in-game label replaces our fallback"
+    );
+    assert!(
+        on_tall(&fx.app, "Off on foot"),
+        "no label key: our fallback wording"
+    );
+    assert!(on_tall(&fx.app, "HEAD TRACKING: WHEN IT IS OFF"));
+}
+
+#[test]
+fn other_settings_get_readable_names_and_a_raw_editor() {
+    let mut fx = game_fixture(None, &YOUR_FILE);
+    assert!(on_tall(&fx.app, "OTHER"));
+    assert!(on_tall(&fx.app, "Audio master volume"), "humanised name");
+    assert!(
+        on_tall(&fx.app, "Music volume"),
+        "label by the pause_Options convention"
+    );
+    assert!(
+        on_tall(&fx.app, "AudioMasterVolume"),
+        "the raw name stays visible"
+    );
+    send(
+        &mut fx,
+        [config::Message::SetAttr(
+            "AudioMasterVolume".into(),
+            "0.5".into(),
+        )],
+    );
+    apply(&mut fx);
+    assert!(attributes(&fx).contains("<Attr name=\"AudioMasterVolume\" value=\"0.5\"/>"));
+}
+
+#[test]
+fn reset_and_set_to_default_remove_the_attribute() {
+    let mut fx = game_fixture(None, &YOUR_FILE);
+    let original = attributes(&fx);
+    send(
+        &mut fx,
+        [
+            config::Message::ResetAttr("FieldOfView".into()),
+            config::Message::SetAttr("HeadtrackingGlobalSmoothingPosition".into(), "0.0".into()),
+        ],
+    );
+    assert_eq!(pending(&fx), 2);
+    apply(&mut fx);
+    let want: String = original
+        .lines()
+        .filter(|line| {
+            !line.contains("name=\"FieldOfView\"")
+                && !line.contains("name=\"HeadtrackingGlobalSmoothingPosition\"")
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_eq!(attributes(&fx), want);
+}
+
+#[test]
+fn a_value_that_equals_the_default_is_not_stored() {
+    let mut fx = game_fixture(None, &YOUR_FILE);
+    let original = attributes(&fx);
+    send(
+        &mut fx,
+        [
+            config::Message::SetAttr("AudioMasterVolume".into(), "0.8".into()),
+            config::Message::SetAttr("Language".into(), "english".into()),
+        ],
+    );
+    assert_eq!(pending(&fx), 0, "the file never holds a default");
+    apply(&mut fx);
+    assert_eq!(attributes(&fx), original);
+
+    send(
+        &mut fx,
+        [
+            config::Message::SetAttr("AudioMasterVolume".into(), "0".into()),
+            config::Message::SetAttr("AudioMasterVolume".into(), "0.".into()),
+            config::Message::SetAttr("AudioMasterVolume".into(), "0.8".into()),
+            config::Message::SetAttr("AudioMasterVolume".into(), "0.85".into()),
+        ],
+    );
+    assert_eq!(pending(&fx), 1);
+    apply(&mut fx);
+    assert!(attributes(&fx).contains("<Attr name=\"AudioMasterVolume\" value=\"0.85\"/>"));
+}
+
+#[test]
+fn cfg_override_is_noted() {
+    let note = config::OVERRIDDEN_BY_CFG;
+    let mut fx = game_fixture(Some("G_HEADTRACKINGTOGGLEENABLED = 1\n"), &YOUR_FILE);
+    assert!(on_tall(&fx.app, note));
+    send(
+        &mut fx,
+        [config::Message::RemoveCvar(
+            "g_headtrackingToggleEnabled".into(),
+        )],
+    );
+    assert!(
+        !on_tall(&fx.app, note),
+        "a staged removal from user.cfg lifts the note"
+    );
+
+    let fx = game_fixture(Some("cl_fov = 90\n"), &YOUR_FILE);
+    assert!(
+        on_tall(&fx.app, note),
+        "cl_fov is the cvar of Field of view"
+    );
+    let fx = game_fixture(Some("r_filmgrain = 1\n"), &YOUR_FILE);
+    assert!(
+        !on_tall(&fx.app, note),
+        "no row's cvar is set in this user.cfg"
+    );
+}
+
+#[test]
+fn stale_user_attribute_is_listed_and_removable() {
+    let mut fx = game_fixture(None, &YOUR_FILE);
+    assert!(on_tall(&fx.app, "NOT IN THIS GAME VERSION"));
+    assert!(on_tall(&fx.app, "OldMouseCurve"));
+    send(
+        &mut fx,
+        [config::Message::SetAttr("OldMouseCurve".into(), "4".into())],
+    );
+    assert_eq!(pending(&fx), 1, "a raw edit");
+    send(
+        &mut fx,
+        [config::Message::ResetAttr("OldMouseCurve".into())],
+    );
+    assert!(
+        on_tall(&fx.app, "OldMouseCurve"),
+        "a staged removal stays on screen until applied"
+    );
+    apply(&mut fx);
+    assert!(!attributes(&fx).contains("OldMouseCurve"));
+    assert!(!on_tall(&fx.app, "OldMouseCurve"));
+    assert!(!on_tall(&fx.app, "NOT IN THIS GAME VERSION"));
+}
+
+#[test]
+fn without_game_data_the_flat_list_remains() {
+    let mut fx = fixture(None, Some(numbered_attributes(5).as_bytes()));
+    send(&mut fx, [config::Message::Tab(Tab::Game)]);
+    assert!(has(&fx.app, "5 settings"));
+    assert!(has(&fx.app, "Setting003"));
+    assert!(has_part(&fx.app, "Game data unavailable"));
+    assert!(has_part(&fx.app, "no Data.p4k"));
+    assert!(!has(&fx.app, "OTHER"));
+
+    fs::write(fx.channel.dir.join("Data.p4k"), b"not an archive").unwrap();
+    testkit::write_build(&fx.channel, "4.1.0", "1234");
+    feed(
+        &mut fx.app,
+        [
+            Message::Navigate(Screen::Overview),
+            Message::Navigate(Screen::Config),
+        ],
+    );
+    assert!(has_part(&fx.app, "could not be read"));
+    assert!(has(&fx.app, "Setting003"), "the flat list stays");
+}
+
+#[test]
+fn the_note_says_why_once() {
+    let mut fx = fixture(None, Some(numbered_attributes(5).as_bytes()));
+    send(&mut fx, [config::Message::Tab(Tab::Game)]);
+    let note = format!(
+        "Game data unavailable: showing only the settings stored in your file. {}",
+        Unavailable::NoArchive.reason()
+    );
+    assert!(has(&fx.app, &note), "{note}");
+    assert!(!has_part(&fx.app, "only the binds"));
+}
+
+#[test]
+fn try_again_reads_game_data_that_has_appeared_since() {
+    let mut fx = fixture(None, Some(numbered_attributes(5).as_bytes()));
+    send(&mut fx, [config::Message::Tab(Tab::Game)]);
+    assert!(has_part(&fx.app, "Game data unavailable"));
+
+    testkit::write_build(&fx.channel, "4.1.0", "1234");
+    testkit::seed_game_data_with(fx.app.context(), GAME_ATTRIBUTES, GAME_STRINGS);
+    send(&mut fx, [config::Message::Tab(Tab::Game)]);
+    assert!(
+        has_part(&fx.app, "Game data unavailable"),
+        "the failed read is kept until asked to try again"
+    );
+
+    let mut ui = sim(&fx.app);
+    ui.click(config::TRY_AGAIN).unwrap();
+    let messages: Vec<Message> = ui.into_messages().collect();
+    feed(&mut fx.app, messages);
+    assert!(!has_part(&fx.app, "Game data unavailable"));
+    assert!(
+        !has_part(&fx.app, "Reading the game's"),
+        "neither the note nor the loading line: the game's list is shown"
+    );
+}
+
+#[test]
+fn a_channel_without_a_build_manifest_says_so() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_with_channels(temp.path(), &["LIVE"]);
+    let channel = ctx.channel.clone().unwrap();
+    fs::write(channel.dir.join("Data.p4k"), b"not an archive").unwrap();
+    testkit::write_channel_files(&channel, None, Some(numbered_attributes(3).as_bytes()));
+    let mut app = App::with(ctx);
+    feed(
+        &mut app,
+        [
+            Message::Navigate(Screen::Config),
+            Message::Config(config::Message::Tab(Tab::Game)),
+        ],
+    );
+    assert!(has_part(&app, "no build manifest"));
+    assert!(has(&app, "Setting002"));
+}
+
+/// A build with fewer settings, so the top of the list shows every kind of group.
+const DEMO_BUILD: &str = r#"<Attributes Version="35">
+ <Attr name="HeadtrackingSource" cvar="g_headtrackingSource" value="0"/>
+ <Attr name="HeadtrackingToggle" cvar="g_headtrackingToggleEnabled" value="0"/>
+ <Attr name="HeadtrackingGlobalSmoothingPosition" cvar="g_headtrackingGlobalSmoothingPosition" value="0.0"/>
+ <Attr name="HeadtrackingDisableDuringWalking" cvar="g_headtrackingToggleDisableDuringWalking" value="1"/>
+ <Attr name="FieldOfView" cvar="cl_fov" value="80"/>
+ <Attr name="AudioMasterVolume" value="0.8"/>
+ <Attr name="AudioMusicVolume" value="0.6"/>
+ <Attr name="ShowHints" cvar="g_showHints" value="1"/>
+</Attributes>
+"#;
+
+#[test]
+fn game_settings_snapshots() {
+    let edits = [
+        config::Message::SetAttr("HeadtrackingGlobalSmoothingPosition".into(), "0.5".into()),
+        config::Message::ResetAttr("AudioMusicVolume".into()),
+    ];
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        let mut fx = game_fixture_with(
+            Some("g_headtrackingToggleEnabled = 1\ncl_fov = 90\n"),
+            &[
+                ("HeadtrackingToggle", "1"),
+                ("HeadtrackingGlobalSmoothingPosition", "0.35"),
+                ("FieldOfView", "90"),
+                ("AudioMusicVolume", "0.4"),
+                ("OldMouseCurve", "3"),
+            ],
+            (DEMO_BUILD, theme),
+        );
+        send(&mut fx, edits.clone());
+        let mut ui = sim(&fx.app);
+        testkit::snapshot(&mut ui, &fx.app.theme(), &format!("config-game-{name}"));
+    }
 }

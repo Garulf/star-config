@@ -1,3 +1,4 @@
+use crate::game_data::GameDataStore;
 use sc_core::backup::{BackupStore, Scope};
 use sc_core::dirs::AppDirs;
 use sc_core::guard::Writer;
@@ -25,6 +26,7 @@ pub struct Context {
     pub game: RunState,
     pub launcher: RunState,
     pub unlocked: bool,
+    game_data: GameDataStore,
     probe: Arc<dyn GameProbe>,
     discovery: Discovery,
     home: Option<PathBuf>,
@@ -44,6 +46,7 @@ impl Context {
             game: RunState::NotRunning,
             launcher: RunState::NotRunning,
             unlocked: false,
+            game_data: GameDataStore::default(),
             probe: Arc::new(SystemProbe),
             discovery: Discovery::ExtrasOnly,
             home: home_dir(),
@@ -98,6 +101,11 @@ impl Context {
             InstallKind::WinePrefix { prefix } => self.display_path(prefix),
             InstallKind::Native => self.display_path(&install.root),
         }
+    }
+
+    /// The shared game defaults. The handle is cheap to clone into a background task.
+    pub fn game_data(&self) -> GameDataStore {
+        self.game_data.clone()
     }
 
     pub fn probe(&self) -> Arc<dyn GameProbe> {

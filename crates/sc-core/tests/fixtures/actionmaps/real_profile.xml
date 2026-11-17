@@ -1,0 +1,89 @@
+<ActionMaps>
+ <ActionProfiles version="1" optionsVersion="2" rebindVersion="2" profileName="default">
+  <deviceoptions name=" VKBsim Gladiator EVO L    {00000000-0000-0000-0000-000000000000}">
+   <option input="x" saturation="0.89099997"/>
+   <option input="x" saturation="0.89099997"/>
+   <option input="y" saturation="0.89099997"/>
+   <option input="y" saturation="0.89099997"/>
+   <option input="z" saturation="0.89099997"/>
+   <option input="z" saturation="0.89099997"/>
+  </deviceoptions>
+  <deviceoptions name=" VKBsim Gladiator EVO R    {00000000-0000-0000-0000-000000000000}">
+   <option input="roty" saturation="0.99000001"/>
+   <option input="roty" saturation="0.99000001"/>
+   <option input="rotx" saturation="0.99000001"/>
+   <option input="rotx" saturation="0.99000001"/>
+   <option input="x" saturation="0.89099997"/>
+   <option input="x" saturation="0.89099997"/>
+   <option input="y" saturation="0.89099997"/>
+   <option input="y" saturation="0.89099997"/>
+   <option input="z" saturation="0.99000001"/>
+   <option input="z" saturation="0.99000001"/>
+   <option input="rotx" deadzone="0"/>
+   <option input="roty" deadzone="0"/>
+   <option input="rotz" deadzone="0"/>
+   <option input="x" deadzone="0.0198"/>
+   <option input="y" deadzone="0.0198"/>
+  </deviceoptions>
+  <options type="keyboard" instance="1" Product="Wine Keyboard  {00000000-0000-0000-0000-000000000000}"/>
+  <options type="gamepad" instance="1" Product="Controller (Gamepad)">
+   <flight_view exponent="1"/>
+  </options>
+  <options type="joystick" instance="1" Product=" VKBsim Gladiator EVO R    {00000000-0000-0000-0000-000000000000}">
+   <flight_move_pitch exponent="2"/>
+   <flight_move_yaw exponent="2"/>
+   <flight_view exponent="3"/>
+  </options>
+  <options type="joystick" instance="2" Product="Thrustmaster T-Pedals  {00000000-0000-0000-0000-000000000000}">
+   <flight_move_space_brake invert="1"/>
+  </options>
+  <options type="joystick" instance="3" Product="Thrustmaster T-Pedals (merged)  {00000000-0000-0000-0000-000000000000}">
+   <flight_move_roll invert="1"/>
+   <flight_move_space_brake invert="1"/>
+  </options>
+  <options type="joystick" instance="4" Product=" VKBsim Gladiator EVO L    {00000000-0000-0000-0000-000000000000}">
+   <flight_strafe_longitudinal invert="1"/>
+  </options>
+  <modifiers />
+  <actionmap name="seat_general">
+   <action name="v_eject">
+    <rebind input="kb1_y" activationMode="double_tap"/>
+    <rebind input="js1_rctrl+button3"/>
+   </action>
+   <action name="v_operator_mode_cycle_forward">
+    <rebind input="kb1_ "/>
+   </action>
+   <action name="v_set_flight_mode">
+    <rebind input="js4_button21"/>
+   </action>
+   <action name="v_set_salvage_mode">
+    <rebind input="js4_button23"/>
+   </action>
+  </actionmap>
+  <actionmap name="spaceship_movement">
+   <action name="v_afterburner">
+    <rebind input="js4_button1"/>
+   </action>
+   <action name="v_roll_left">
+    <rebind input="js2_ "/>
+   </action>
+   <action name="v_roll_right">
+    <rebind input="js2_ "/>
+    <rebind input="mo1_ "/>
+   </action>
+   <action name="v_toggle_landing_system">
+    <rebind input="js4_ "/>
+    <rebind input="gp1_ "/>
+   </action>
+  </actionmap>
+  <actionmap name="spaceship_salvage">
+   <action name="v_salvage_beam_spacing_abs">
+    <rebind input="js4_z"/>
+   </action>
+   <action name="v_salvage_cycle_modifiers_focused">
+    <rebind input="kb1_mouse3"/>
+    <rebind input="js1_button15"/>
+   </action>
+  </actionmap>
+ </ActionProfiles>
+</ActionMaps>

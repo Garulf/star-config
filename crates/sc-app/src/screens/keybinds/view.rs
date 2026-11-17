@@ -1,26 +1,29 @@
 use super::inputs::{
-    AXES, Typed, captures, judge, quick_buttons, quick_hats, quick_label, slot_label,
+    AXES, Known, Typed, captures, judge, kind_label, quick_buttons, quick_hats, quick_label,
+    slot_label, stick_label,
 };
 use super::model::{Cell, CellRef, Line, MapEntry, Model, Row as BindRow};
 use super::source::{Failure, UNRECOGNISED};
 use super::{
-    ADD_CAPTION, AddForm, CAPTURE_PROMPT, Doc, EMPTY_BODY, EMPTY_TITLE, Edit, Message,
-    RESET_CAPTION, SaveForm, State, SwapForm, UNBIND_CAPTION, add_input,
+    ADD_CAPTION, AddForm, CAPTURE_PROMPT, Doc, EMPTY_BODY, EMPTY_TITLE, Edit, GAME_DATA_LOADING,
+    Message, NOT_IN_BUILD, RESET_CAPTION, SHOW_UNLISTED, SaveForm, State, SwapForm, TRY_AGAIN, Tab,
+    UNBIND_CAPTION, add_input,
 };
 use crate::icons;
 use crate::screen::{Screen, ToastKind};
 use crate::theme::{self, ButtonKind, FONT_MONO, FONT_SEMIBOLD, Tone, binds, layout, size, space};
 use crate::widgets::{
-    banner, button, change_marker, divider, empty_state, heading, hint, icon_only, icon_toned,
-    key_cap, label, muted, page_fixed, pick_list, search_field, table_header, tag, text_field,
-    virtual_list, virtual_list_with_id,
+    banner, button, change_marker, checkbox, divider, empty_state, heading, hint, icon_only,
+    icon_toned, key_cap, label, muted, page_fixed, pick_list, search_field, table_header, tag,
+    text_field, virtual_list, virtual_list_with_id,
 };
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
     self, Column, Id, Row, Space, column, container, mouse_area, row, scrollable, sensor, text,
 };
 use iced::{Alignment, Element, Length, Padding};
-use sc_core::actionmaps::{DeviceKind, Slot, layout_file_name};
+use sc_core::actionmaps::{DeviceKind, layout_file_name};
+use sc_core::binds::{KINDS, Origin};
 
 pub(super) const ROW_HEIGHT: f32 = layout::ROW_MIN_HEIGHT;
 pub(super) const TABLE_ID: &str = "keybinds-table";
@@ -52,13 +55,28 @@ const CHIP_PADDING: Padding = Padding {
 };
 const NO_MATCH: &str = "No binds match. Clear the search or pick another action map.";
 const PICK_A_CELL: &str = "Choose a cell to change its bind.";
+const UNBOUND: &str = "Unbound";
 
 fn action_width() -> Length {
     Length::FillPortion(binds::ACTION_PORTION)
 }
 
-fn device_width() -> Length {
-    Length::FillPortion(binds::DEVICE_PORTION)
+/// Keyboard combos with a long modifier and stick buttons with their product line need the most
+/// room. Mouse binds are rare in real files.
+fn device_width(kind: DeviceKind) -> Length {
+    Length::FillPortion(match kind {
+        DeviceKind::Keyboard => binds::KEYBOARD_PORTION,
+        DeviceKind::Mouse => binds::MOUSE_PORTION,
+        DeviceKind::Gamepad => binds::GAMEPAD_PORTION,
+        DeviceKind::Joystick => binds::JOYSTICK_PORTION,
+    })
+}
+
+fn several_entries(kind: DeviceKind) -> String {
+    format!(
+        "Your file has more than one {} entry for this action. Set, Unbind and Reset replace them all.",
+        kind_label(kind).to_lowercase()
+    )
 }
 
 impl State {
@@ -72,13 +90,23 @@ impl State {
                 empty_state(EMPTY_TITLE, EMPTY_BODY, None),
             ),
             (Doc::Failed(failure), _) => page_fixed(title, None, Vec::new(), self.failed(failure)),
-            (Doc::Ready { .. } | Doc::Away, Some(model)) => self.main(model),
-            _ => page_fixed(
-                title,
-                None,
-                Vec::new(),
-                container(hint("Reading your keybinds...")).center(Length::Fill),
-            ),
+            (Doc::Ready { .. } | Doc::Away, Some(model)) => match self.tab {
+                Tab::Binds => self.main(model),
+                Tab::Advanced => self.advanced_page(model),
+            },
+            _ => {
+                let note = if self.game_loading {
+                    GAME_DATA_LOADING
+                } else {
+                    "Reading your keybinds..."
+                };
+                page_fixed(
+                    title,
+                    None,
+                    Vec::new(),
+                    container(hint(note)).center(Length::Fill),
+                )
+            }
         }
     }
 
@@ -88,6 +116,9 @@ impl State {
             .height(Length::Fill);
         if !self.writable() && matches!(self.doc, Doc::Ready { .. }) {
             body = body.push(banner(ToastKind::Warning, UNRECOGNISED, None));
+        }
+        if let Some(note) = self.game_note() {
+            body = body.push(note);
         }
         body = body.push(
             row![
@@ -115,7 +146,20 @@ impl State {
         )
     }
 
-    fn source_pick(&self) -> Element<'_, Message> {
+    /// Why the game's defaults are missing, with a retry, or that they are still being read.
+    pub(super) fn game_note(&self) -> Option<Element<'_, Message>> {
+        if let Some(note) = &self.no_game_note {
+            return Some(banner(
+                ToastKind::Info,
+                note,
+                Some((TRY_AGAIN, Message::RetryGameData)),
+            ));
+        }
+        self.game_loading
+            .then(|| banner(ToastKind::Info, GAME_DATA_LOADING, None))
+    }
+
+    pub(super) fn source_pick(&self) -> Element<'_, Message> {
         let selected = self
             .sources
             .iter()
@@ -128,7 +172,7 @@ impl State {
 
     fn toolbar<'a>(&'a self, model: &'a Model) -> Element<'a, Message> {
         let writable = self.writable();
-        let mut bar = row![self.source_pick()]
+        let mut bar = row![self.tabs(), self.source_pick()]
             .spacing(space::SM)
             .align_y(Alignment::Center);
         if self.source.as_ref().is_some_and(super::Source::is_layout) {
@@ -138,9 +182,15 @@ impl State {
                 self.can_save_layout().then_some(Message::OpenSaveAs),
             ));
         }
-        bar = bar
-            .push(Space::new().width(Length::Fill))
-            .push(self.conflicts_chip(model.conflicts));
+        bar = bar.push(Space::new().width(Length::Fill));
+        if self.game().is_some() {
+            bar = bar.push(checkbox(
+                SHOW_UNLISTED,
+                self.show_unlisted,
+                Message::ShowUnlisted,
+            ));
+        }
+        bar = bar.push(self.conflicts_chip(model.conflicts));
         if model.joysticks().len() >= 2 {
             bar = bar.push(button(
                 "Swap joysticks",
@@ -148,12 +198,14 @@ impl State {
                 writable.then_some(Message::OpenSwap),
             ));
         }
-        bar.push(button(
-            "Add a bind by name",
-            ButtonKind::Secondary,
-            writable.then_some(Message::OpenAdd),
-        ))
-        .into()
+        if self.game().is_none() && !self.game_loading {
+            bar = bar.push(button(
+                "Add a bind by name",
+                ButtonKind::Secondary,
+                writable.then_some(Message::OpenAdd),
+            ));
+        }
+        bar.into()
     }
 
     fn conflicts_chip(&self, count: usize) -> Element<'_, Message> {
@@ -191,14 +243,25 @@ impl State {
     fn map_list<'a>(&'a self, model: &'a Model) -> Element<'a, Message> {
         let mut items = Column::new().push(map_item(
             "All",
-            model.total,
+            model.total(self.show_unlisted),
             self.map.is_none(),
             Message::PickMap(None),
         ));
+        let mut category: Option<&str> = None;
         for entry in &model.maps {
+            let count = entry.count(self.show_unlisted);
+            if count == 0 {
+                continue;
+            }
+            if let Some(name) = entry.category.as_deref()
+                && category != Some(name)
+            {
+                items = items.push(category_heading(name));
+                category = Some(name);
+            }
             items = items.push(map_item(
                 &entry.label,
-                entry.count,
+                count,
                 self.map.as_deref() == Some(entry.name.as_str()),
                 Message::PickMap(Some(entry.name.clone())),
             ));
@@ -227,7 +290,7 @@ impl State {
             )
         };
         column![
-            header_row(model),
+            header_row(),
             sensor(container(table).height(Length::Fill))
                 .on_show(|size| Message::TableResized(size.height))
                 .on_resize(|size| Message::TableResized(size.height)),
@@ -242,16 +305,22 @@ impl State {
 
     fn line<'a>(&'a self, model: &'a Model, line: Line) -> Element<'a, Message> {
         match line {
-            Line::Group(index) => group_line(&model.maps[index]),
+            Line::Group(index) => group_line(&model.maps[index], self.show_unlisted),
             Line::Action(index) => self.action_row(model, &model.rows[index]),
         }
     }
 
     fn action_row<'a>(&'a self, model: &'a Model, bind: &'a BindRow) -> Element<'a, Message> {
+        let mut name = row![label(bind.label.as_str()).wrapping(text::Wrapping::None)]
+            .spacing(space::SM)
+            .align_y(Alignment::Center);
+        if !bind.in_build {
+            name = name.push(tag(NOT_IN_BUILD, Tone::Warning));
+        }
         let mut cells: Vec<Element<'a, Message>> = vec![
             container(
                 column![
-                    label(bind.label.as_str()).wrapping(text::Wrapping::None),
+                    name,
                     hint(bind.action.as_str()).wrapping(text::Wrapping::None),
                 ]
                 .spacing(TIGHT),
@@ -261,8 +330,8 @@ impl State {
             .clip(true)
             .into(),
         ];
-        for (slot, cell) in model.columns.iter().zip(&bind.cells) {
-            cells.push(self.bind_cell(bind, *slot, cell));
+        for cell in &bind.cells {
+            cells.push(self.bind_cell(model, bind, cell));
         }
         container(
             Row::with_children(cells)
@@ -281,19 +350,19 @@ impl State {
 
     fn bind_cell<'a>(
         &'a self,
+        model: &'a Model,
         bind: &'a BindRow,
-        slot: Slot,
         cell: &'a Cell,
     ) -> Element<'a, Message> {
         let target = CellRef {
             map: bind.map.clone(),
             action: bind.action.clone(),
-            slot,
+            kind: cell.kind,
         };
         let selected = matches!(&self.panel, super::Panel::Edit(edit) if edit.cell == target);
-        widget::button(cell_content(cell))
+        widget::button(cell_content(model, cell))
             .padding(CELL_PADDING)
-            .width(device_width())
+            .width(device_width(cell.kind))
             .height(Length::Fill)
             .style(theme::bind_cell(selected, cell.conflict))
             .on_press_maybe(self.writable().then_some(Message::Select(target)))
@@ -310,7 +379,7 @@ impl State {
                 };
                 hint(note).into()
             }
-            super::Panel::Edit(edit) => edit_panel(model, edit),
+            super::Panel::Edit(edit) => self.edit_panel(model, edit),
             super::Panel::Add(form) => self.add_panel(model, form),
             super::Panel::Swap(form) => self.swap_panel(model, form),
             super::Panel::SaveAs(form) => self.save_panel(form),
@@ -323,7 +392,7 @@ impl State {
         let error = form
             .slot
             .as_ref()
-            .map(|choice| judge(choice.slot, &form.input));
+            .map(|choice| judge(choice.slot, &form.input, Known::default()));
         let first = row![
             labelled(
                 "Action map",
@@ -495,7 +564,7 @@ fn map_item<'a>(
         row![
             label(name)
                 .width(Length::Fill)
-                .wrapping(text::Wrapping::None),
+                .wrapping(text::Wrapping::Word),
             hint(count.to_string()),
         ]
         .spacing(space::SM)
@@ -508,10 +577,10 @@ fn map_item<'a>(
     .into()
 }
 
-fn header_row(model: &Model) -> Element<'_, Message> {
+fn header_row() -> Element<'static, Message> {
     let mut cells = vec![header_cell("Action", action_width())];
-    for title in &model.column_labels {
-        cells.push(header_cell(title, device_width()));
+    for kind in KINDS {
+        cells.push(header_cell(kind_label(kind), device_width(kind)));
     }
     container(
         Row::with_children(cells)
@@ -544,11 +613,21 @@ fn header_cell(title: &str, width: Length) -> Element<'_, Message> {
     .into()
 }
 
-fn group_line(entry: &MapEntry) -> Element<'_, Message> {
+fn category_heading(name: &str) -> Element<'_, Message> {
+    container(heading(name.to_uppercase()))
+        .padding(Padding {
+            top: space::MD,
+            bottom: space::XS,
+            ..LIST_ITEM_PADDING
+        })
+        .into()
+}
+
+fn group_line(entry: &MapEntry, show_unlisted: bool) -> Element<'_, Message> {
     container(
         row![
             heading(entry.label.to_uppercase()),
-            hint(binds_text(entry.count)),
+            hint(actions_text(entry.count(show_unlisted))),
         ]
         .spacing(space::SM)
         .align_y(Alignment::Center),
@@ -576,34 +655,45 @@ fn caps_row(caps: &[String]) -> Element<'_, Message> {
     parts.into()
 }
 
-fn cell_content(cell: &Cell) -> Element<'_, Message> {
+/// The bind with its marker, the stick for a joystick, and a second line naming the stick's
+/// product or, after a staged edit, what the cell was.
+fn cell_content<'a>(model: &'a Model, cell: &'a Cell) -> Element<'a, Message> {
     let mut first = Row::new().spacing(space::XS).align_y(Alignment::Center);
-    if cell.changed() {
+    if cell.changed {
         first = first.push(change_marker(true));
     }
-    first = if cell.current.is_some() {
-        first.push(caps_row(&cell.caps))
-    } else {
-        first.push(text("-").size(size::BODY).style(theme::muted))
-    };
+    first = first.push(bind_face(cell));
+    let stick = cell.slot().filter(|slot| slot.kind == DeviceKind::Joystick);
+    if let Some(slot) = stick {
+        first = first.push(hint(stick_label(slot)));
+    }
     if cell.conflict {
         first = first.push(icon_toned(icons::WARNING, layout::ICON, Tone::Warning));
     }
-    let content: Element<'_, Message> = if cell.changed() {
-        column![
-            first,
-            hint(cell.was.as_str()).wrapping(text::Wrapping::None)
-        ]
-        .spacing(TIGHT)
-        .into()
-    } else {
-        first.into()
+    let second = cell.was.as_deref().or_else(|| {
+        stick
+            .and_then(|slot| model.products.get(&slot))
+            .map(String::as_str)
+    });
+    let content: Element<'_, Message> = match second {
+        Some(second) => column![first, hint(second).wrapping(text::Wrapping::None)]
+            .spacing(TIGHT)
+            .into(),
+        None => first.into(),
     };
     container(content)
         .height(Length::Fill)
         .align_y(Alignment::Center)
         .clip(true)
         .into()
+}
+
+fn bind_face(cell: &Cell) -> Element<'_, Message> {
+    match (&cell.input, cell.origin) {
+        (Some(_), _) => caps_row(&cell.caps),
+        (None, Origin::Unbound) => hint(UNBOUND).into(),
+        (None, _) => text("-").size(size::BODY).style(theme::muted).into(),
+    }
 }
 
 fn panel_title(title: &str) -> Element<'_, Message> {
@@ -632,6 +722,14 @@ fn error_text<'a>(error: String) -> Element<'a, Message> {
         .into()
 }
 
+fn actions_text(count: usize) -> String {
+    if count == 1 {
+        "1 action".to_string()
+    } else {
+        format!("{count} actions")
+    }
+}
+
 fn binds_text(count: usize) -> String {
     if count == 1 {
         "1 bind".to_string()
@@ -658,19 +756,15 @@ fn raw_line(line: &str) -> Element<'_, Message> {
     .into()
 }
 
-fn edit_panel<'a>(model: &'a Model, edit: &'a Edit) -> Element<'a, Message> {
-    let cell = model.cell(&edit.cell);
-    let column_label = model
-        .column(edit.cell.slot)
-        .map_or("", |index| model.column_labels[index].as_str());
-    let action_label = model
-        .row(&edit.cell.map, &edit.cell.action)
-        .map_or(edit.cell.action.as_str(), |row| row.label.as_str());
-    let title = row![
-        column![
+impl State {
+    fn edit_panel<'a>(&'a self, model: &'a Model, edit: &'a Edit) -> Element<'a, Message> {
+        let cell = model.cell(&edit.cell);
+        let bind = model.row(&edit.cell.map, &edit.cell.action);
+        let action_label = bind.map_or(edit.cell.action.as_str(), |row| row.label.as_str());
+        let mut about = column![
             row![
                 text(action_label).size(size::LABEL).font(FONT_SEMIBOLD),
-                tag(column_label, Tone::Neutral),
+                tag(kind_label(edit.cell.kind), Tone::Neutral),
             ]
             .spacing(space::SM)
             .align_y(Alignment::Center),
@@ -681,38 +775,122 @@ fn edit_panel<'a>(model: &'a Model, edit: &'a Edit) -> Element<'a, Message> {
             )),
         ]
         .spacing(space::XS)
-        .width(Length::Fill),
-        current_bind(cell),
-        icon_only(icons::CLOSE, Some(Message::ClosePanel)),
-    ]
-    .spacing(space::LG)
-    .align_y(Alignment::Center);
-    let main = if captures(edit.cell.slot.kind) {
-        capture_box(edit)
-    } else {
-        quick_picks()
-    };
-    column![
-        title,
-        row![
-            container(main).width(Length::Fill),
-            container(input_side(edit, cell)).width(binds::EDIT_SIDE_WIDTH),
+        .width(Length::Fill);
+        if let Some(description) = bind.and_then(|row| row.description.as_deref()) {
+            about = about.push(hint(description));
+        }
+        let title = row![
+            about,
+            current_bind(cell, self.game().is_some()),
+            icon_only(icons::CLOSE, Some(Message::ClosePanel)),
         ]
-        .spacing(space::XL),
+        .spacing(space::LG)
+        .align_y(Alignment::Center);
+        let main = if captures(edit.cell.kind) {
+            capture_box(edit)
+        } else {
+            quick_picks()
+        };
+        column![
+            title,
+            row![
+                container(main).width(Length::Fill),
+                container(self.input_side(edit, cell)).width(binds::EDIT_SIDE_WIDTH),
+            ]
+            .spacing(space::XL),
+        ]
+        .spacing(space::MD)
+        .into()
+    }
+
+    fn input_side<'a>(&'a self, edit: &'a Edit, cell: Option<&'a Cell>) -> Element<'a, Message> {
+        let judged = judge(edit.slot, &edit.typed, self.known(&edit.cell));
+        let valid = matches!(judged, Typed::Valid(_));
+        let field = text_field(placeholder(edit.cell.kind), &edit.typed, Message::Typed)
+            .on_submit_maybe(valid.then_some(Message::Set))
+            .width(Length::Fill);
+        let mut content = Column::new().spacing(space::SM);
+        if edit.cell.kind == DeviceKind::Joystick {
+            let stick = self.slot_choice(edit.slot);
+            content = content
+                .push(heading("Stick and input as the game writes it"))
+                .push(
+                    pick_list(self.stick_choices(), Some(stick), Message::PickStick)
+                        .width(Length::Fill),
+                );
+        } else {
+            content = content.push(heading("Input as the game writes it"));
+        }
+        content = content.push(
+            row![
+                field,
+                button("Set", ButtonKind::Primary, valid.then_some(Message::Set))
+            ]
+            .spacing(space::SM)
+            .align_y(Alignment::Center),
+        );
+        if let Typed::Invalid(error) = judged {
+            content = content.push(error_text(error));
+        }
+        let Some(cell) = cell else {
+            return content.into();
+        };
+        content = content.push(cell_actions(cell));
+        if cell.extra > 0 {
+            content = content.push(hint(several_entries(cell.kind)));
+        }
+        content.into()
+    }
+}
+
+fn cell_actions(cell: &Cell) -> Element<'_, Message> {
+    row![
+        column![
+            button(
+                "Unbind",
+                ButtonKind::Secondary,
+                cell.unbindable().then_some(Message::Unbind)
+            ),
+            hint(UNBIND_CAPTION),
+        ]
+        .spacing(space::XS)
+        .width(Length::Fill),
+        column![
+            button(
+                "Reset to default",
+                ButtonKind::Secondary,
+                cell.resettable().then_some(Message::Reset)
+            ),
+            hint(RESET_CAPTION),
+        ]
+        .spacing(space::XS)
+        .width(Length::Fill),
     ]
     .spacing(space::MD)
     .into()
 }
 
-/// The cell's input now and, once edited, what it was.
-fn current_bind(cell: Option<&Cell>) -> Element<'_, Message> {
+fn game_default(cell: &Cell) -> Element<'_, Message> {
+    let value: Element<'_, Message> = if cell.default.is_some() {
+        caps_row(&cell.default_caps)
+    } else {
+        muted("None").into()
+    };
+    row![hint("Game default"), value]
+        .spacing(space::SM)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+/// The cell's input now, the game's default a reset returns to, and once edited what it was.
+fn current_bind(cell: Option<&Cell>, with_default: bool) -> Element<'_, Message> {
     let Some(cell) = cell else {
         return Space::new().into();
     };
-    let now: Element<'_, Message> = if cell.current.is_some() {
-        caps_row(&cell.caps)
-    } else {
-        muted("Not bound").into()
+    let now: Element<'_, Message> = match (&cell.input, cell.origin) {
+        (Some(_), _) => caps_row(&cell.caps),
+        (None, Origin::Unbound) => muted(UNBOUND).into(),
+        (None, _) => muted("Not bound").into(),
     };
     let mut content = column![
         row![hint("Now"), now]
@@ -721,8 +899,11 @@ fn current_bind(cell: Option<&Cell>) -> Element<'_, Message> {
     ]
     .spacing(TIGHT)
     .align_x(Alignment::End);
-    if cell.changed() {
-        content = content.push(hint(cell.was.as_str()));
+    if with_default {
+        content = content.push(game_default(cell));
+    }
+    if let Some(was) = &cell.was {
+        content = content.push(hint(was.as_str()));
     }
     content.into()
 }
@@ -813,53 +994,4 @@ fn placeholder(kind: DeviceKind) -> &'static str {
         DeviceKind::Joystick => "button5",
         DeviceKind::Gamepad => "shoulderl",
     }
-}
-
-fn input_side<'a>(edit: &'a Edit, cell: Option<&'a Cell>) -> Element<'a, Message> {
-    let judged = judge(edit.cell.slot, &edit.typed);
-    let valid = matches!(judged, Typed::Valid(_));
-    let field = text_field(
-        placeholder(edit.cell.slot.kind),
-        &edit.typed,
-        Message::Typed,
-    )
-    .on_submit_maybe(valid.then_some(Message::Set))
-    .width(Length::Fill);
-    let mut content = column![
-        heading("Input as the game writes it"),
-        row![
-            field,
-            button("Set", ButtonKind::Primary, valid.then_some(Message::Set))
-        ]
-        .spacing(space::SM)
-        .align_y(Alignment::Center),
-    ]
-    .spacing(space::SM);
-    if let Typed::Invalid(error) = judged {
-        content = content.push(error_text(error));
-    }
-    let bound = cell.is_some_and(|cell| cell.current.is_some());
-    content
-        .push(
-            row![
-                column![
-                    button(
-                        "Reset to default",
-                        ButtonKind::Secondary,
-                        bound.then_some(Message::Reset)
-                    ),
-                    hint(RESET_CAPTION),
-                ]
-                .spacing(space::XS)
-                .width(Length::Fill),
-                column![
-                    button("Unbind", ButtonKind::Ghost, None),
-                    hint(UNBIND_CAPTION)
-                ]
-                .spacing(space::XS)
-                .width(Length::Fill),
-            ]
-            .spacing(space::MD),
-        )
-        .into()
 }

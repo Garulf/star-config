@@ -1,36 +1,71 @@
-//! The table the screen shows, built from the staged document and the file as loaded.
+//! The table the screen shows: the game's actions merged with the staged document. Built
+//! once per load or edit, never while drawing.
 
-use super::inputs::{caps, humanise, product_name, slot_label};
+use super::NOT_IN_BUILD;
+use super::inputs::{input_caps, product_name, slot_label};
 use sc_core::actionmaps::{ActionMaps, DeviceKind, Slot, parse_input};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use sc_core::binds::{self, KINDS, Origin};
+use sc_core::defaults::{ActionDef, GameData, humanise};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CellRef {
     pub map: String,
     pub action: String,
-    pub slot: Slot,
+    pub kind: DeviceKind,
 }
 
 #[derive(Debug, Clone)]
 pub struct Cell {
-    /// The whole input as the file has it now, staged edits included.
-    pub current: Option<String>,
-    pub base: Option<String>,
+    pub kind: DeviceKind,
+    /// The bind in effect, staged edits included, with its device prefix.
+    pub input: Option<String>,
+    pub origin: Origin,
+    pub default: Option<String>,
+    /// How many more entries of this kind the file has for the action.
+    pub extra: usize,
     pub caps: Vec<String>,
-    pub was: String,
+    pub default_caps: Vec<String>,
+    /// Differs from the game's default, or without game data from the file as loaded.
+    pub changed: bool,
+    /// What the cell showed before the staged edits, when they changed it.
+    pub was: Option<String>,
     pub conflict: bool,
 }
 
 impl Cell {
-    pub fn changed(&self) -> bool {
-        self.current != self.base
+    pub fn slot(&self) -> Option<Slot> {
+        slot_of(self.input.as_deref())
+    }
+
+    pub fn default_slot(&self) -> Option<Slot> {
+        slot_of(self.default.as_deref())
     }
 
     /// The input after its device prefix, such as `lalt+f`.
     pub fn rest(&self) -> Option<&str> {
-        let current = self.current.as_deref()?;
-        Some(parse_input(current).map_or(current, |(_, rest)| rest))
+        let input = self.input.as_deref()?;
+        Some(parse_input(input).map_or(input, |(_, rest)| rest))
     }
+
+    /// The game's default after its device prefix, such as `escape`.
+    pub fn default_rest(&self) -> Option<&str> {
+        let default = self.default.as_deref()?;
+        Some(parse_input(default).map_or(default, |(_, rest)| rest))
+    }
+
+    /// The file holds something of this kind for the action, which Reset removes.
+    pub fn resettable(&self) -> bool {
+        matches!(self.origin, Origin::Override | Origin::Unbound) || self.extra > 0
+    }
+
+    pub fn unbindable(&self) -> bool {
+        self.input.is_some()
+    }
+}
+
+fn slot_of(input: Option<&str>) -> Option<Slot> {
+    input.and_then(parse_input).map(|(slot, _)| slot)
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +73,10 @@ pub struct Row {
     pub map: String,
     pub action: String,
     pub label: String,
+    pub description: Option<String>,
+    pub listed: bool,
+    pub in_build: bool,
+    /// In the order of `binds::KINDS`.
     pub cells: Vec<Cell>,
     haystack: String,
 }
@@ -46,13 +85,26 @@ impl Row {
     pub fn conflict(&self) -> bool {
         self.cells.iter().any(|cell| cell.conflict)
     }
+
+    fn shown(&self, show_unlisted: bool) -> bool {
+        self.listed || show_unlisted
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct MapEntry {
     pub name: String,
     pub label: String,
-    pub count: usize,
+    /// The game's category, `None` without game data.
+    pub category: Option<String>,
+    listed: usize,
+    all: usize,
+}
+
+impl MapEntry {
+    pub fn count(&self, show_unlisted: bool) -> usize {
+        if show_unlisted { self.all } else { self.listed }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,204 +115,84 @@ pub enum Line {
 
 #[derive(Debug, Clone)]
 pub struct Model {
-    pub columns: Vec<Slot>,
-    pub column_labels: Vec<String>,
     pub rows: Vec<Row>,
     pub maps: Vec<MapEntry>,
-    pub total: usize,
     pub devices: String,
     pub conflicts: usize,
     pub products: HashMap<Slot, String>,
+    stick_binds: BTreeMap<u32, usize>,
 }
 
-type Inputs = HashMap<(String, String, Slot), String>;
+type Key = (String, String);
 
-fn inputs_of(doc: &ActionMaps) -> Inputs {
-    let mut inputs = Inputs::new();
-    for binding in doc.bindings() {
-        if let Some(slot) = binding.slot {
-            inputs
-                .entry((binding.map.clone(), binding.action.clone(), slot))
-                .or_insert_with(|| binding.input.clone());
-        }
+/// What each cell showed in the file as loaded, before any staged edit. It depends only on
+/// that file and the game's defaults, so the screen keeps it across edits.
+pub struct Baseline {
+    cells: HashMap<Key, Vec<(Option<String>, Origin)>>,
+}
+
+impl Baseline {
+    pub fn of(game: Option<&GameData>, base: &ActionMaps) -> Self {
+        let cells = binds::rows(game, base)
+            .into_iter()
+            .map(|row| {
+                let cells = row
+                    .cells
+                    .into_iter()
+                    .map(|cell| (cell.input, cell.origin))
+                    .collect();
+                ((row.map, row.action), cells)
+            })
+            .collect();
+        Self { cells }
     }
-    inputs
-}
-
-fn map_order(current: &ActionMaps, base: &ActionMaps) -> Vec<String> {
-    let mut order: Vec<String> = Vec::new();
-    for name in current.maps().into_iter().chain(base.maps()) {
-        if !order.iter().any(|known| known == name) {
-            order.push(name.to_string());
-        }
-    }
-    order
-}
-
-fn action_order(current: &ActionMaps, base: &ActionMaps, maps: &[String]) -> Vec<(String, String)> {
-    let mut seen: HashSet<(String, String)> = HashSet::new();
-    let mut order: Vec<(String, String)> = Vec::new();
-    for binding in current.bindings().iter().chain(base.bindings()) {
-        if binding.slot.is_none() {
-            continue;
-        }
-        let key = (binding.map.clone(), binding.action.clone());
-        if seen.insert(key.clone()) {
-            order.push(key);
-        }
-    }
-    let rank = |map: &str| maps.iter().position(|known| known == map);
-    order.sort_by_key(|(map, _)| rank(map));
-    order
-}
-
-fn columns_of(current: &ActionMaps, base: &ActionMaps) -> Vec<Slot> {
-    let declared = current.devices().iter().map(|device| device.slot);
-    let bound = current
-        .bindings()
-        .iter()
-        .chain(base.bindings())
-        .filter_map(|binding| binding.slot);
-    declared
-        .chain(bound)
-        .collect::<BTreeSet<Slot>>()
-        .into_iter()
-        .collect()
-}
-
-fn conflicting(current: &ActionMaps) -> (HashSet<(String, String, String)>, usize) {
-    let conflicts = current.conflicts();
-    let set = conflicts
-        .iter()
-        .flat_map(|conflict| {
-            let input = conflict.input.to_ascii_lowercase();
-            conflict
-                .bindings
-                .iter()
-                .map(move |(map, action)| (map.clone(), action.clone(), input.clone()))
-        })
-        .collect();
-    (set, conflicts.len())
-}
-
-fn caps_of(input: Option<&str>) -> Vec<String> {
-    match input.and_then(parse_input) {
-        Some((slot, rest)) => caps(slot.kind, rest),
-        None => input.map(|raw| vec![raw.to_string()]).unwrap_or_default(),
-    }
-}
-
-fn was_text(base: Option<&str>) -> String {
-    match base {
-        Some(_) => format!("Was {}", caps_of(base).join(" + ")),
-        None => "Was not set".to_string(),
-    }
-}
-
-fn devices_line(current: &ActionMaps, columns: &[Slot]) -> String {
-    let mut devices: Vec<_> = current.devices().iter().collect();
-    devices.sort_by_key(|device| device.slot);
-    if devices.is_empty() {
-        return columns
-            .iter()
-            .map(|slot| slot_label(*slot))
-            .collect::<Vec<_>>()
-            .join(", ");
-    }
-    devices
-        .iter()
-        .map(|device| {
-            let label = slot_label(device.slot);
-            let named = matches!(device.slot.kind, DeviceKind::Joystick | DeviceKind::Gamepad);
-            match device.product.as_deref().map(product_name) {
-                Some(product) if named && !product.is_empty() => format!("{label}: {product}"),
-                _ => label,
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 impl Model {
-    pub fn build(current: &ActionMaps, base: &ActionMaps) -> Self {
-        let columns = columns_of(current, base);
-        let maps = map_order(current, base);
-        let now = inputs_of(current);
-        let then = inputs_of(base);
-        let (conflicted, conflicts) = conflicting(current);
-
-        let rows: Vec<Row> = action_order(current, base, &maps)
-            .into_iter()
-            .map(|(map, action)| {
-                let cells: Vec<Cell> = columns
-                    .iter()
-                    .map(|slot| {
-                        let key = (map.clone(), action.clone(), *slot);
-                        let current = now.get(&key).cloned();
-                        let base = then.get(&key).cloned();
-                        let conflict = current.as_ref().is_some_and(|input| {
-                            conflicted.contains(&(
-                                map.clone(),
-                                action.clone(),
-                                input.to_ascii_lowercase(),
-                            ))
-                        });
-                        Cell {
-                            caps: caps_of(current.as_deref()),
-                            was: was_text(base.as_deref()),
-                            current,
-                            base,
-                            conflict,
-                        }
-                    })
-                    .collect();
-                let label = humanise(&action);
-                let haystack = haystack(&map, &action, &label, &cells);
-                Row {
-                    map,
-                    action,
-                    label,
-                    cells,
-                    haystack,
-                }
-            })
-            .collect();
-
-        let maps: Vec<MapEntry> = maps
-            .into_iter()
-            .map(|name| MapEntry {
-                count: rows
-                    .iter()
-                    .filter(|row| row.map == name)
-                    .map(|row| row.cells.iter().filter(|c| c.current.is_some()).count())
-                    .sum(),
-                label: humanise(&name),
-                name,
-            })
-            .filter(|entry| rows.iter().any(|row| row.map == entry.name))
-            .collect();
-        let products = current
-            .devices()
+    /// Conflicts count only rows the table can show: listed ones, or all with `show_unlisted`.
+    pub fn build(
+        game: Option<&GameData>,
+        current: &ActionMaps,
+        baseline: &Baseline,
+        show_unlisted: bool,
+    ) -> Self {
+        let merged = binds::rows(game, current);
+        let conflicts = binds::conflicts(merged.iter().filter(|row| row.listed || show_unlisted));
+        let conflicted: HashSet<(String, String, String)> = conflicts
             .iter()
-            .filter_map(|device| {
-                let product = product_name(device.product.as_deref()?);
-                (!product.is_empty()).then_some((device.slot, product))
+            .flat_map(|conflict| {
+                let input = conflict.input.to_ascii_lowercase();
+                conflict
+                    .bindings
+                    .iter()
+                    .map(move |(map, action)| (map.clone(), action.clone(), input.clone()))
             })
             .collect();
+        let defs = definitions(game);
+        let maps = map_entries(game, &merged);
+        let rank: HashMap<&str, usize> = maps
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.name.as_str(), index))
+            .collect();
+        let mut rows: Vec<Row> = merged
+            .iter()
+            .map(|row| {
+                let key = (row.map.clone(), row.action.clone());
+                let def = defs.get(&key).copied();
+                let was = baseline.cells.get(&key);
+                build_row(game, row, def, was, &conflicted)
+            })
+            .collect();
+        rows.sort_by_key(|row| rank.get(row.map.as_str()).copied());
         Self {
-            column_labels: columns.iter().map(|slot| slot_label(*slot)).collect(),
-            devices: devices_line(current, &columns),
-            total: maps.iter().map(|entry| entry.count).sum(),
-            columns,
-            rows,
             maps,
-            conflicts,
-            products,
+            devices: devices_line(current),
+            conflicts: conflicts.len(),
+            products: products(current),
+            stick_binds: stick_binds(current),
+            rows,
         }
-    }
-
-    pub fn column(&self, slot: Slot) -> Option<usize> {
-        self.columns.iter().position(|known| *known == slot)
     }
 
     pub fn row(&self, map: &str, action: &str) -> Option<&Row> {
@@ -270,7 +202,7 @@ impl Model {
     }
 
     pub fn cell(&self, cell: &CellRef) -> Option<&Cell> {
-        let column = self.column(cell.slot)?;
+        let column = KINDS.iter().position(|kind| *kind == cell.kind)?;
         self.row(&cell.map, &cell.action)
             .map(|row| &row.cells[column])
     }
@@ -282,38 +214,55 @@ impl Model {
             .map_or_else(|| humanise(map), |entry| entry.label.clone())
     }
 
-    pub fn joysticks(&self) -> Vec<Slot> {
-        self.columns
+    pub fn total(&self, show_unlisted: bool) -> usize {
+        self.maps
             .iter()
-            .copied()
+            .map(|entry| entry.count(show_unlisted))
+            .sum()
+    }
+
+    /// Sticks the file names or binds, in order.
+    pub fn joysticks(&self) -> Vec<Slot> {
+        let named = self
+            .products
+            .keys()
             .filter(|slot| slot.kind == DeviceKind::Joystick)
+            .map(|slot| slot.instance);
+        named
+            .chain(self.stick_binds.keys().copied())
+            .collect::<BTreeSet<u32>>()
+            .into_iter()
+            .map(|instance| Slot {
+                kind: DeviceKind::Joystick,
+                instance,
+            })
             .collect()
     }
 
     /// Binds on either joystick, the number a swap of the two rewrites.
     pub fn joystick_binds(&self, a: u32, b: u32) -> usize {
-        self.columns
+        [a, b]
             .iter()
-            .enumerate()
-            .filter(|(_, slot)| {
-                slot.kind == DeviceKind::Joystick && (slot.instance == a || slot.instance == b)
-            })
-            .map(|(column, _)| {
-                self.rows
-                    .iter()
-                    .filter(|row| row.cells[column].current.is_some())
-                    .count()
-            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|instance| self.stick_binds.get(instance))
             .sum()
     }
 
     /// The rows to show, with a group line before each action map when all maps are shown.
-    pub fn lines(&self, map: Option<&str>, query: &str, conflicts_only: bool) -> Vec<Line> {
+    pub fn lines(
+        &self,
+        map: Option<&str>,
+        query: &str,
+        conflicts_only: bool,
+        show_unlisted: bool,
+    ) -> Vec<Line> {
         let query = query.trim().to_lowercase();
         let mut lines = Vec::new();
         let mut last_map: Option<&str> = None;
         for (index, row) in self.rows.iter().enumerate() {
-            let shown = map.is_none_or(|name| row.map == name)
+            let shown = row.shown(show_unlisted)
+                && map.is_none_or(|name| row.map == name)
                 && (query.is_empty() || row.haystack.contains(&query))
                 && (!conflicts_only || row.conflict());
             if !shown {
@@ -331,6 +280,197 @@ impl Model {
     }
 }
 
+fn definitions(game: Option<&GameData>) -> HashMap<Key, &ActionDef> {
+    game.into_iter()
+        .flat_map(|game| &game.maps)
+        .flat_map(|map| {
+            map.actions
+                .iter()
+                .map(move |def| ((map.name.clone(), def.name.clone()), def))
+        })
+        .collect()
+}
+
+/// Maps grouped by category, each category where its first map stands in the game's order.
+fn map_entries(game: Option<&GameData>, rows: &[binds::Row]) -> Vec<MapEntry> {
+    let mut entries: Vec<MapEntry> = Vec::new();
+    for row in rows {
+        let at = match entries.iter().position(|entry| entry.name == row.map) {
+            Some(at) => at,
+            None => {
+                entries.push(map_entry(game, &row.map));
+                entries.len() - 1
+            }
+        };
+        entries[at].all += 1;
+        entries[at].listed += usize::from(row.listed);
+    }
+    let mut categories: Vec<Option<String>> = Vec::new();
+    for entry in &entries {
+        if !categories.contains(&entry.category) {
+            categories.push(entry.category.clone());
+        }
+    }
+    entries.sort_by_key(|entry| categories.iter().position(|known| *known == entry.category));
+    entries
+}
+
+fn map_entry(game: Option<&GameData>, name: &str) -> MapEntry {
+    let (label, category) = match (game, game.and_then(|game| game.map(name))) {
+        (Some(game), Some(def)) => (
+            game.label(def.label.as_deref(), name),
+            Some(game.label(def.category.as_deref(), "Other")),
+        ),
+        (Some(_), None) => (humanise(name), Some(NOT_IN_BUILD.to_string())),
+        (None, _) => (humanise(name), None),
+    };
+    MapEntry {
+        name: name.to_string(),
+        label,
+        category,
+        listed: 0,
+        all: 0,
+    }
+}
+
+fn build_row(
+    game: Option<&GameData>,
+    row: &binds::Row,
+    def: Option<&ActionDef>,
+    before: Option<&Vec<(Option<String>, Origin)>>,
+    conflicted: &HashSet<(String, String, String)>,
+) -> Row {
+    let label = match (game, def) {
+        (Some(game), Some(def)) => game.label(def.label.as_deref(), &row.action),
+        _ => humanise(&row.action),
+    };
+    let description = game
+        .zip(def.and_then(|def| def.description.as_deref()))
+        .map(|(game, key)| game.label(Some(key), ""))
+        .filter(|text| !text.is_empty());
+    let cells: Vec<Cell> = row
+        .cells
+        .iter()
+        .enumerate()
+        .map(|(column, cell)| {
+            let (base_input, base_origin) = before
+                .and_then(|cells| cells.get(column).cloned())
+                .unwrap_or((None, Origin::DefaultUnbound));
+            let conflict = cell.input.as_ref().is_some_and(|input| {
+                conflicted.contains(&(
+                    row.map.clone(),
+                    row.action.clone(),
+                    input.to_ascii_lowercase(),
+                ))
+            });
+            let reference = if game.is_some() {
+                cell.default.as_deref()
+            } else {
+                base_input.as_deref()
+            };
+            Cell {
+                kind: cell.kind,
+                caps: caps(game, cell.input.as_deref()),
+                default_caps: caps(game, cell.default.as_deref()),
+                changed: !same(cell.input.as_deref(), reference),
+                was: (!same(cell.input.as_deref(), base_input.as_deref()))
+                    .then(|| was_text(game, base_input.as_deref(), base_origin)),
+                input: cell.input.clone(),
+                origin: cell.origin,
+                default: cell.default.clone(),
+                extra: cell.extra.len(),
+                conflict,
+            }
+        })
+        .collect();
+    let haystack = haystack(&row.map, &row.action, &label, &cells);
+    Row {
+        map: row.map.clone(),
+        action: row.action.clone(),
+        label,
+        description,
+        listed: row.listed,
+        in_build: row.in_build,
+        cells,
+        haystack,
+    }
+}
+
+fn same(a: Option<&str>, b: Option<&str>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn caps(game: Option<&GameData>, input: Option<&str>) -> Vec<String> {
+    input
+        .map(|input| input_caps(game, input))
+        .unwrap_or_default()
+}
+
+fn was_text(game: Option<&GameData>, base: Option<&str>, origin: Origin) -> String {
+    match (base, origin) {
+        (Some(input), _) => format!("Was {}", input_caps(game, input).join(" + ")),
+        (None, Origin::Unbound) => "Was unbound".to_string(),
+        (None, _) => "Was not bound".to_string(),
+    }
+}
+
+fn products(current: &ActionMaps) -> HashMap<Slot, String> {
+    current
+        .devices()
+        .iter()
+        .filter_map(|device| {
+            let product = product_name(device.product.as_deref()?);
+            (!product.is_empty()).then_some((device.slot, product))
+        })
+        .collect()
+}
+
+fn stick_binds(current: &ActionMaps) -> BTreeMap<u32, usize> {
+    let mut counts = BTreeMap::new();
+    for binding in current.bindings() {
+        let Some((slot, rest)) = parse_input(&binding.input) else {
+            continue;
+        };
+        if slot.kind == DeviceKind::Joystick && !rest.trim().is_empty() {
+            *counts.entry(slot.instance).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn devices_line(current: &ActionMaps) -> String {
+    let mut devices: Vec<_> = current.devices().iter().collect();
+    devices.sort_by_key(|device| device.slot);
+    if devices.is_empty() {
+        let bound: BTreeSet<Slot> = current
+            .bindings()
+            .iter()
+            .filter_map(|binding| binding.slot)
+            .collect();
+        return bound
+            .into_iter()
+            .map(slot_label)
+            .collect::<Vec<_>>()
+            .join(", ");
+    }
+    devices
+        .iter()
+        .map(|device| {
+            let label = slot_label(device.slot);
+            let named = matches!(device.slot.kind, DeviceKind::Joystick | DeviceKind::Gamepad);
+            match device.product.as_deref().map(product_name) {
+                Some(product) if named && !product.is_empty() => format!("{label}: {product}"),
+                _ => label,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn haystack(map: &str, action: &str, label: &str, cells: &[Cell]) -> String {
     let mut parts = vec![
         map.to_string(),
@@ -339,7 +479,7 @@ fn haystack(map: &str, action: &str, label: &str, cells: &[Cell]) -> String {
         label.to_string(),
     ];
     for cell in cells {
-        if let Some(input) = &cell.current {
+        if let Some(input) = &cell.input {
             parts.push(input.clone());
             parts.push(cell.rest().unwrap_or_default().to_string());
             parts.push(cell.caps.join(" + "));
@@ -351,6 +491,7 @@ fn haystack(map: &str, action: &str, label: &str, cells: &[Cell]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sc_core::defaults::Sources;
     use sc_core::staging::Document;
     use std::path::Path;
 
@@ -375,49 +516,229 @@ mod tests {
 </ActionMaps>
 "#;
 
-    fn doc() -> ActionMaps {
-        ActionMaps::parse(Path::new("actionmaps.xml"), FILE.as_bytes()).unwrap()
+    const PROFILE: &str = r#"<profile>
+ <actionmap name="spaceship_weapons" UILabel="@ui_weapons" UICategory="@ui_ship">
+  <action name="v_attack1_group1" mouse="mouse1" joystick="button1" UILabel="@ui_fire"/>
+  <action name="v_hidden" keyboard="f12"/>
+ </actionmap>
+ <actionmap name="spaceship_movement" UILabel="@ui_flight" UICategory="@ui_ship">
+  <action name="v_strafe_up" keyboard="space" UILabel="@ui_up"/>
+  <action name="v_boost" keyboard="lshift" UILabel="@ui_boost"/>
+ </actionmap>
+ <actionmap name="player" UILabel="@ui_player" UICategory="@ui_foot">
+  <action name="jump" keyboard="space" UILabel="@ui_jump"/>
+ </actionmap>
+</profile>
+"#;
+
+    const STRINGS: &str = "ui_weapons=Weapons\nui_flight=Flight\nui_ship=Ship\nui_fire=Fire\nui_up=Up\nui_boost=Boost\nui_player=Character\nui_foot=On foot\nui_jump=Jump\n";
+
+    fn doc(text: &str) -> ActionMaps {
+        ActionMaps::parse(Path::new("actionmaps.xml"), text.as_bytes()).unwrap()
+    }
+
+    fn game() -> GameData {
+        GameData::from_sources(
+            "test".into(),
+            &Sources {
+                profile: PROFILE.into(),
+                attributes: "<Attributes/>".into(),
+                key_names: "<LocalizedKeys/>".into(),
+                strings: STRINGS.into(),
+            },
+        )
+        .unwrap()
+    }
+
+    fn build(game: Option<&GameData>, current: &ActionMaps, base: &ActionMaps) -> Model {
+        Model::build(game, current, &Baseline::of(game, base), false)
     }
 
     #[test]
-    fn columns_rows_conflicts_and_devices() {
-        let model = Model::build(&doc(), &doc());
-        assert_eq!(
-            model.column_labels,
-            ["Keyboard", "Mouse", "Joystick 1", "Joystick 2"]
+    fn conflicts_count_only_rows_the_table_shows() {
+        let file = FILE.replace(
+            "<rebind input=\"mo1_mouse1\"/>",
+            "<rebind input=\"mo1_mouse1\"/>\n    <rebind input=\"kb1_f12\"/>",
         );
+        let game = game();
+        let (current, base) = (doc(&file), doc(&file));
+        let baseline = Baseline::of(Some(&game), &base);
+        let listed = Model::build(Some(&game), &current, &baseline, false);
+        let fire = |model: &Model| {
+            cell(
+                model,
+                "spaceship_weapons",
+                "v_attack1_group1",
+                DeviceKind::Keyboard,
+            )
+            .conflict
+        };
+        assert_eq!(
+            listed.conflicts, 1,
+            "js2_button5 only: kb1_f12 clashes with v_hidden, which the table hides"
+        );
+        assert!(!fire(&listed));
+        let all = Model::build(Some(&game), &current, &baseline, true);
+        assert_eq!(all.conflicts, 2);
+        assert!(fire(&all));
+    }
+
+    fn cell<'a>(model: &'a Model, map: &str, action: &str, kind: DeviceKind) -> &'a Cell {
+        model
+            .cell(&CellRef {
+                map: map.into(),
+                action: action.into(),
+                kind,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn without_game_data_rows_conflicts_and_devices_come_from_the_file() {
+        let model = build(None, &doc(FILE), &doc(FILE));
         assert_eq!(
             model.devices,
             "Keyboard, Joystick 1: VKB Gladiator NXT L, Joystick 2: VKB Gladiator NXT R"
         );
         assert_eq!(model.rows.len(), 2);
         assert_eq!(model.conflicts, 1);
-        assert!(model.rows[0].cells[3].conflict);
-        assert!(!model.rows[0].cells[0].conflict);
-        assert_eq!(model.total, 4);
+        let stick = cell(
+            &model,
+            "spaceship_movement",
+            "v_strafe_up",
+            DeviceKind::Joystick,
+        );
+        assert!(stick.conflict);
+        assert!(
+            !stick.changed,
+            "nothing staged and no defaults to differ from"
+        );
+        assert_eq!(model.total(false), 2);
         assert_eq!(model.joystick_binds(1, 2), 2);
+        assert_eq!(
+            model.joysticks(),
+            [1, 2].map(|instance| Slot {
+                kind: DeviceKind::Joystick,
+                instance
+            })
+        );
     }
 
     #[test]
-    fn lines_group_by_map_and_filter() {
-        let model = Model::build(&doc(), &doc());
+    fn with_game_data_maps_follow_their_category_and_the_changed_marker_follows_the_default() {
+        let game = game();
+        let model = build(Some(&game), &doc(FILE), &doc(FILE));
+        let maps: Vec<(&str, Option<&str>)> = model
+            .maps
+            .iter()
+            .map(|entry| (entry.label.as_str(), entry.category.as_deref()))
+            .collect();
         assert_eq!(
-            model.lines(None, "", false),
+            maps,
+            [
+                ("Weapons", Some("Ship")),
+                ("Flight", Some("Ship")),
+                ("Character", Some("On foot"))
+            ]
+        );
+        let up = cell(
+            &model,
+            "spaceship_movement",
+            "v_strafe_up",
+            DeviceKind::Keyboard,
+        );
+        assert_eq!(up.origin, Origin::Override);
+        assert!(!up.changed, "an override equal to its default");
+        let fire = cell(
+            &model,
+            "spaceship_weapons",
+            "v_attack1_group1",
+            DeviceKind::Joystick,
+        );
+        assert!(fire.changed);
+        assert_eq!(fire.default.as_deref(), Some("js1_button1"));
+        let boost = cell(
+            &model,
+            "spaceship_movement",
+            "v_boost",
+            DeviceKind::Keyboard,
+        );
+        assert_eq!(boost.origin, Origin::Default);
+        assert!(!boost.changed);
+        assert!(!boost.resettable());
+        assert!(boost.unbindable());
+        assert_eq!(model.total(false), 4);
+        assert_eq!(model.total(true), 5);
+    }
+
+    #[test]
+    fn rows_are_grouped_like_the_map_list_and_lines_filter() {
+        let game = game();
+        let model = build(Some(&game), &doc(FILE), &doc(FILE));
+        let names: Vec<&str> = model.rows.iter().map(|row| row.action.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "v_attack1_group1",
+                "v_hidden",
+                "v_strafe_up",
+                "v_boost",
+                "jump"
+            ]
+        );
+        assert_eq!(
+            model.lines(None, "", false, false),
             [
                 Line::Group(0),
                 Line::Action(0),
                 Line::Group(1),
-                Line::Action(1)
+                Line::Action(2),
+                Line::Action(3),
+                Line::Group(2),
+                Line::Action(4)
             ]
         );
         assert_eq!(
-            model.lines(Some("spaceship_weapons"), "", false),
-            [Line::Action(1)]
+            model.lines(Some("spaceship_weapons"), "", false, true),
+            [Line::Action(0), Line::Action(1)]
         );
-        assert_eq!(
-            model.lines(None, "kb1_space", false),
-            [Line::Group(0), Line::Action(0)]
+        assert_eq!(model.lines(None, "lshift", false, false).len(), 2);
+        assert_eq!(model.lines(None, "left click", false, false).len(), 2);
+    }
+
+    #[test]
+    fn staged_edits_say_what_the_cell_was() {
+        let base = doc(FILE);
+        let mut current = base.clone();
+        current
+            .apply(&sc_core::actionmaps::Op::Unbind {
+                map: "spaceship_movement".into(),
+                action: "v_boost".into(),
+                slot: Slot {
+                    kind: DeviceKind::Keyboard,
+                    instance: 1,
+                },
+            })
+            .unwrap();
+        let game = game();
+        let model = build(Some(&game), &current, &base);
+        let boost = cell(
+            &model,
+            "spaceship_movement",
+            "v_boost",
+            DeviceKind::Keyboard,
         );
-        assert_eq!(model.lines(None, "left click", false).len(), 2);
+        assert_eq!(boost.origin, Origin::Unbound);
+        assert!(boost.changed);
+        assert!(boost.resettable());
+        assert!(!boost.unbindable());
+        assert_eq!(boost.was.as_deref(), Some("Was L Shift"));
+        let up = cell(
+            &model,
+            "spaceship_movement",
+            "v_strafe_up",
+            DeviceKind::Keyboard,
+        );
+        assert_eq!(up.was, None);
     }
 }

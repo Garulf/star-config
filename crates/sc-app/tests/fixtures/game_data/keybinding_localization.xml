@@ -1,0 +1,22 @@
+<LocalizedKeys>
+ <device name="keyboard">
+  <Key name="a" localizationString="@input_key_keyboard_a" shortLocString="" iconName=""/>
+  <Key name="f" localizationString="@input_key_keyboard_f" shortLocString="" iconName=""/>
+  <Key name="lalt" localizationString="@input_key_keyboard_leftAlt" shortLocString="@input_key_keyboard_leftAlt_short" iconName=""/>
+  <Key name="nolabel" localizationString="@input_key_keyboard_missing" shortLocString="" iconName=""/>
+ </device>
+ <device name="mouse">
+  <Key name="mouse1" localizationString="@input_key_mouse_button1" shortLocString="" iconName="Mouse_Left"/>
+  <Key name="mouse3" localizationString="@input_key_mouse_button3" shortLocString="" iconName="Mouse_Wheel"/>
+ </device>
+ <device name="control_pad">
+  <Key name="a" localizationString="@input_key_controlPad_a" shortLocString="" iconName="Joypad_A"/>
+ </device>
+ <device name="joystick1">
+  <Key name="button1" localizationString="@input_key_joystick1_button1" shortLocString="" iconName="Joystick_1"/>
+ </device>
+ <device name="joystick2">
+  <Key name="button1" localizationString="@input_key_joystick2_button1"/>
+  <Key name="button2" localizationString="@input_key_joystick2_button2"/>
+ </device>
+</LocalizedKeys>

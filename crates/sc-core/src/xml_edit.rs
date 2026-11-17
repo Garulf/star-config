@@ -225,6 +225,45 @@ pub fn set_attr(text: &mut String, attr: &Attr, new_value: &str) {
     text.replace_range(attr.value_span.clone(), &escaped);
 }
 
+/// Adds `name="value"` after the element's last attribute, or after its name when it has none.
+pub fn insert_attr(text: &mut String, element: &Element, name: &str, value: &str) {
+    let at = element
+        .attrs
+        .last()
+        .map_or(element.open_tag.start + 1 + element.name.len(), |last| {
+            last.value_span.end + 1
+        });
+    text.insert_str(at, &format!(" {name}=\"{}\"", escape_attr(value)));
+}
+
+/// Removes the attribute and the whitespace in front of it.
+pub fn remove_attr(text: &mut String, attr: &Attr) {
+    let bytes = text.as_bytes();
+    let mut start = attr.value_span.start - 1;
+    while bytes[start - 1].is_ascii_whitespace() {
+        start -= 1;
+    }
+    start -= 1;
+    while bytes[start - 1].is_ascii_whitespace() {
+        start -= 1;
+    }
+    start -= attr.name.len();
+    while bytes[start - 1].is_ascii_whitespace() {
+        start -= 1;
+    }
+    text.replace_range(start..attr.value_span.end + 1, "");
+}
+
+/// Turns an element with nothing but whitespace inside into a self-closing one.
+pub fn collapse_empty(text: &mut String, element: &Element) {
+    let Some(close) = &element.close_tag else {
+        return;
+    };
+    if is_blank(&text[element.open_tag.end..close.start]) {
+        text.replace_range(element.open_tag.end - 1..close.end, "/>");
+    }
+}
+
 /// Removes the element and, when it sits alone on its line, the whole line.
 pub fn remove_element(text: &mut String, element: &Element) {
     let range = whole_line(text, &element.span).unwrap_or_else(|| element.span.clone());
@@ -285,6 +324,19 @@ pub fn append_child(text: &mut String, parent: &Element, xml: &str) {
                 );
             }
         }
+    }
+}
+
+/// Inserts `xml` on its own line after `anchor`, indented like it.
+pub fn insert_after(text: &mut String, anchor: &Element, xml: &str) {
+    let newline = line_ending(text);
+    let indent = indent_of_line(text, anchor.open_tag.start).to_string();
+    let end = anchor.span.end;
+    match text[end..].find('\n') {
+        Some(line_end) if is_blank(&text[end..end + line_end]) => {
+            text.insert_str(end + line_end + 1, &format!("{indent}{xml}{newline}"));
+        }
+        _ => text.insert_str(end, &format!("{newline}{indent}{xml}")),
     }
 }
 
@@ -492,6 +544,87 @@ mod tests {
         set_attr(&mut text, &attr, "it's \"q\"");
         assert_eq!(text, "<R v='it&apos;s &quot;q&quot;' w=\"y\"/>");
         assert_eq!(scan_ok(&text).elements[0].attrs[0].value, "it's \"q\"");
+    }
+
+    #[test]
+    fn insert_after_adds_a_sibling_line_with_the_anchors_indent() {
+        let text = "<R>\r\n <A>\r\n  <B x=\"1\"/>\r\n </A>\r\n <C/>\r\n</R>\r\n";
+        let scanned = scan_ok(text);
+        let mut edited = text.to_string();
+        insert_after(&mut edited, &scanned.elements[2], "<D/>");
+        assert_eq!(
+            edited,
+            "<R>\r\n <A>\r\n  <B x=\"1\"/>\r\n  <D/>\r\n </A>\r\n <C/>\r\n</R>\r\n"
+        );
+        let mut edited = text.to_string();
+        insert_after(&mut edited, &scanned.elements[1], "<D/>");
+        assert_eq!(
+            edited,
+            "<R>\r\n <A>\r\n  <B x=\"1\"/>\r\n </A>\r\n <D/>\r\n <C/>\r\n</R>\r\n"
+        );
+
+        let text = "<R><A/></R>";
+        let mut edited = text.to_string();
+        insert_after(&mut edited, &scan_ok(text).elements[1], "<D/>");
+        assert_eq!(edited, "<R><A/>\r\n<D/></R>");
+    }
+
+    #[test]
+    fn insert_attr_goes_after_the_last_attribute_or_the_name() {
+        let cases = [
+            (
+                "<R>\n <A x=\"1\" y=\"2\"/>\n</R>",
+                "<R>\n <A x=\"1\" y=\"2\" z=\"a&amp;b\"/>\n</R>",
+            ),
+            (
+                "<R>\n <A x=\"1\" >\n </A>\n</R>",
+                "<R>\n <A x=\"1\" z=\"a&amp;b\" >\n </A>\n</R>",
+            ),
+            ("<R>\n <A/>\n</R>", "<R>\n <A z=\"a&amp;b\"/>\n</R>"),
+            ("<R>\n <A />\n</R>", "<R>\n <A z=\"a&amp;b\" />\n</R>"),
+        ];
+        for (before, after) in cases {
+            let mut text = before.to_string();
+            let element = scan_ok(before).elements[1].clone();
+            insert_attr(&mut text, &element, "z", "a&b");
+            assert_eq!(text, after);
+            assert_eq!(
+                scan_ok(&text).elements[1].attrs.last().unwrap().value,
+                "a&b"
+            );
+        }
+    }
+
+    #[test]
+    fn remove_attr_takes_the_name_and_the_whitespace_before_it() {
+        let cases = [
+            ("<A x=\"1\" y=\"2\" z=\"3\"/>", 1, "<A x=\"1\" z=\"3\"/>"),
+            ("<A x=\"1\" y=\"2\"/>", 1, "<A x=\"1\"/>"),
+            ("<A x=\"1\" y=\"2\" />", 0, "<A y=\"2\" />"),
+            ("<A x = '1'\r\n   y=\"2\"/>", 1, "<A x = '1'/>"),
+            ("<A x=\"1\"/>", 0, "<A/>"),
+        ];
+        for (before, which, after) in cases {
+            let mut text = before.to_string();
+            let attr = scan_ok(before).elements[0].attrs[which].clone();
+            remove_attr(&mut text, &attr);
+            assert_eq!(text, after);
+            scan_ok(&text);
+        }
+    }
+
+    #[test]
+    fn collapse_empty_closes_an_element_with_only_whitespace_inside() {
+        let text = "<R>\r\n <A x=\"1\">\r\n </A>\r\n <B x=\"1\"><!-- n --></B>\r\n <C x=\"1\"/>\r\n</R>\r\n";
+        let mut edited = text.to_string();
+        let scanned = scan_ok(text);
+        for index in [3, 2, 1] {
+            collapse_empty(&mut edited, &scanned.elements[index]);
+        }
+        assert_eq!(
+            edited,
+            "<R>\r\n <A x=\"1\"/>\r\n <B x=\"1\"><!-- n --></B>\r\n <C x=\"1\"/>\r\n</R>\r\n"
+        );
     }
 
     #[test]

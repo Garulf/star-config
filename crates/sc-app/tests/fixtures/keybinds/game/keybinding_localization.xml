@@ -1,0 +1,34 @@
+<LocalizedKeys>
+ <device name="keyboard">
+  <Key name="space" localizationString="@kb_key_space" shortLocString="" iconName=""/>
+  <Key name="lshift" localizationString="@kb_key_lshift" shortLocString="" iconName=""/>
+  <Key name="lctrl" localizationString="@kb_key_lctrl" shortLocString="" iconName=""/>
+  <Key name="lalt" localizationString="@kb_key_lalt" shortLocString="" iconName=""/>
+  <Key name="ralt" localizationString="@kb_key_ralt" shortLocString="" iconName=""/>
+ </device>
+ <device name="mouse">
+  <Key name="mouse1" localizationString="@kb_mouse_1" shortLocString="" iconName="Mouse_Left"/>
+  <Key name="mouse2" localizationString="@kb_mouse_2" shortLocString="" iconName="Mouse_Right"/>
+  <Key name="mouse3" localizationString="@kb_mouse_3" shortLocString="" iconName="Mouse_Wheel"/>
+  <Key name="mouse4" localizationString="@kb_mouse_4" shortLocString="" iconName=""/>
+  <Key name="mouse5" localizationString="@kb_mouse_5" shortLocString="" iconName=""/>
+  <Key name="mwheel_up" localizationString="@kb_mouse_wheel_up" shortLocString="" iconName=""/>
+  <Key name="mwheel_down" localizationString="@kb_mouse_wheel_down" shortLocString="" iconName=""/>
+  <Key name="maxis_x" localizationString="@kb_mouse_x" shortLocString="" iconName=""/>
+  <Key name="maxis_y" localizationString="@kb_mouse_y" shortLocString="" iconName=""/>
+ </device>
+ <device name="control_pad">
+  <Key name="a" localizationString="@kb_pad_a" shortLocString="" iconName="Joypad_A"/>
+  <Key name="b" localizationString="@kb_pad_b" shortLocString="" iconName="Joypad_B"/>
+  <Key name="x" localizationString="@kb_pad_x" shortLocString="" iconName="Joypad_X"/>
+  <Key name="y" localizationString="@kb_pad_y" shortLocString="" iconName="Joypad_Y"/>
+  <Key name="thumbl" localizationString="@kb_pad_thumbl" shortLocString="" iconName=""/>
+  <Key name="thumbr" localizationString="@kb_pad_thumbr" shortLocString="" iconName=""/>
+  <Key name="thumblx" localizationString="@kb_pad_thumblx" shortLocString="" iconName=""/>
+  <Key name="thumbly" localizationString="@kb_pad_thumbly" shortLocString="" iconName=""/>
+  <Key name="thumbrx" localizationString="@kb_pad_thumbrx" shortLocString="" iconName=""/>
+  <Key name="thumbry" localizationString="@kb_pad_thumbry" shortLocString="" iconName=""/>
+  <Key name="triggerl_btn" localizationString="@kb_pad_triggerl" shortLocString="" iconName=""/>
+  <Key name="triggerr_btn" localizationString="@kb_pad_triggerr" shortLocString="" iconName=""/>
+ </device>
+</LocalizedKeys>

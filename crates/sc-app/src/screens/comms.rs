@@ -3,6 +3,7 @@ use super::edits::{self, Carry, Edits, Pending, Target, Written};
 use super::typed::{self, Kind};
 use super::words::{GAME_RUNNING, words};
 use crate::context::Context;
+use crate::game_data::Loaded as GameLoaded;
 use crate::screen::{Action, Origin, Screen, Toast, ToastKind};
 use crate::theme::{ButtonKind, layout, space};
 use crate::widgets::{
@@ -13,15 +14,28 @@ use crate::{icons, work};
 use iced::widget::{Column, row};
 use iced::{Alignment, Element, Task};
 use sc_core::attributes::{Attributes, Op};
-use sc_core::catalog::attrs::{self, AttrKind, KnownAttr};
+use sc_core::catalog::layout as options;
+use sc_core::catalog::layout::{Entry, Kind as LayoutKind};
+use sc_core::defaults::GameData;
 use sc_core::error::Result;
 use sc_core::staging::Staged;
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 const SNAPSHOT_LABEL: &str = "Head tracking and comms changes";
 const SUBTITLE: &str = "These are the game's own settings. star-config does not track your head. It sets what the game does with a tracker you already use.";
 const SOURCE: &str = "HeadtrackingSource";
 const SOURCE_HINT: &str = "Which tracker the game uses. What each number means has not been confirmed, so this is the number stored in the file.";
+const COMMS_KEYWORDS: [&str; 8] = [
+    "headtracking",
+    "hmd",
+    "voip",
+    "foip",
+    "faceware",
+    "comms",
+    "voice",
+    "mic",
+];
 const OTHER_SETTINGS: &str = "Other settings in this file";
 const ELSEWHERE: &str = "This name has no head tracking or comms word in it, so it will be listed on the Config screen under Game settings.";
 
@@ -44,10 +58,25 @@ struct NewSetting {
     value: String,
 }
 
+struct Group {
+    title: String,
+    rows: Vec<Row>,
+}
+
+struct Row {
+    entry: &'static Entry,
+    label: String,
+    default: Option<String>,
+    choices: Vec<(String, String)>,
+}
+
 pub struct State {
     seq: u64,
     channel: Option<PathBuf>,
     attrs: AttrFile,
+    groups: Vec<Group>,
+    /// What was typed into a field whose value is the default, which the file does not keep.
+    draft: Option<(String, String)>,
     applying: bool,
     adding: Option<NewSetting>,
 }
@@ -55,6 +84,7 @@ pub struct State {
 #[derive(Debug, Clone)]
 pub enum Message {
     Loaded(u64, Carry<Loaded>),
+    GameLoaded(u64, GameLoaded),
     Set(String, String),
     Remove(String),
     OpenAdd,
@@ -65,25 +95,80 @@ pub enum Message {
     Applied(Carry<Applied>),
 }
 
-fn kind_of(attr: &KnownAttr) -> Kind<'static> {
-    match &attr.kind {
-        AttrKind::Bool => Kind::Bool,
-        AttrKind::Float { min, max, step } => Kind::Range {
+fn kind_of(row: &Row) -> Kind<'_> {
+    match &row.entry.kind {
+        LayoutKind::Toggle => Kind::Bool,
+        LayoutKind::Slider { min, max, step } => Kind::Range {
             min: *min,
             max: *max,
             step: *step,
         },
-        AttrKind::RawInt => Kind::Number,
-        AttrKind::Text => Kind::Text,
+        LayoutKind::Number => Kind::Number,
+        LayoutKind::Text => Kind::Text,
+        LayoutKind::Choice(_) => Kind::Choice(Cow::Borrowed(&row.choices)),
     }
 }
 
-fn hint_of(attr: &'static KnownAttr) -> Option<&'static str> {
-    if attr.name == SOURCE {
+fn hint_of(entry: &'static Entry) -> Option<&'static str> {
+    if entry.name == SOURCE {
         Some(SOURCE_HINT)
     } else {
-        attr.note.as_deref()
+        entry.note.as_deref()
     }
+}
+
+/// Head tracking and comms entries of the layout, by section, with the game's own wording
+/// when the build's strings are known and our fallback wording when not.
+fn groups(game: Option<&GameData>) -> Vec<Group> {
+    let sections = options::layout().tabs.iter().flat_map(|tab| &tab.sections);
+    sections
+        .filter_map(|section| {
+            let rows: Vec<Row> = section
+                .entries
+                .iter()
+                .filter(|entry| is_comms_related(&entry.name))
+                .map(|entry| row_of(entry, game))
+                .collect();
+            let title = match game {
+                Some(game) => game.label(section.key.as_deref(), &section.fallback),
+                None => section.fallback.clone(),
+            };
+            (!rows.is_empty()).then_some(Group { title, rows })
+        })
+        .collect()
+}
+
+fn row_of(entry: &'static Entry, game: Option<&GameData>) -> Row {
+    let fallback = entry.fallback.as_deref().unwrap_or(&entry.name);
+    let Some(game) = game else {
+        return Row {
+            entry,
+            label: fallback.to_string(),
+            default: entry.default.clone(),
+            choices: Vec::new(),
+        };
+    };
+    let choices = match &entry.kind {
+        LayoutKind::Choice(choices) => choices
+            .iter()
+            .map(|(value, key)| (value.clone(), game.label(Some(key), value)))
+            .collect(),
+        _ => Vec::new(),
+    };
+    Row {
+        entry,
+        label: game.label(entry.label_key.as_deref(), fallback),
+        default: game
+            .setting(&entry.name)
+            .map(|s| s.default.clone())
+            .or_else(|| entry.default.clone()),
+        choices,
+    }
+}
+
+pub fn is_comms_related(name: &str) -> bool {
+    let name = name.to_lowercase();
+    COMMS_KEYWORDS.iter().any(|keyword| name.contains(keyword))
 }
 
 fn was(base: Option<&str>, current: Option<&str>) -> Option<Was> {
@@ -91,7 +176,7 @@ fn was(base: Option<&str>, current: Option<&str>) -> Option<Was> {
 }
 
 fn is_other(name: &str) -> bool {
-    attrs::find(name).is_none() && attrs::is_comms_related(name)
+    options::entry(name).is_none() && is_comms_related(name)
 }
 
 impl State {
@@ -100,6 +185,8 @@ impl State {
             seq: 0,
             channel: None,
             attrs: AttrFile::Loading,
+            groups: groups(None),
+            draft: None,
             applying: false,
             adding: None,
         }
@@ -112,21 +199,32 @@ impl State {
         if !same_channel || self.attrs.is_away() {
             self.attrs = AttrFile::Loading;
             self.applying = false;
+            self.draft = None;
+        }
+        if !same_channel {
+            self.groups = groups(None);
         }
         let Some(channel) = channel else {
             self.channel = None;
             return Task::none();
         };
         let seq = self.seq;
-        work::background(
-            move || {
-                Carry::new(Loaded {
-                    channel: channel.dir.clone(),
-                    attrs: attr_edit::load(&channel.attributes_xml()),
-                })
-            },
-            move |loaded| Message::Loaded(seq, loaded),
-        )
+        let (cached, read_game) = attr_edit::game_data(ctx);
+        if cached.is_some() {
+            self.groups = groups(attr_edit::game_of(cached.as_ref()));
+        }
+        Task::batch([
+            work::background(
+                move || {
+                    Carry::new(Loaded {
+                        channel: channel.dir.clone(),
+                        attrs: attr_edit::load(&channel.attributes_xml()),
+                    })
+                },
+                move |loaded| Message::Loaded(seq, loaded),
+            ),
+            read_game.map(move |loaded| Message::GameLoaded(seq, loaded)),
+        ])
     }
 
     pub fn update(&mut self, message: Message, _ctx: &Context) -> Action<Message> {
@@ -141,11 +239,17 @@ impl State {
                 }
                 Action::none()
             }
-            Message::Set(name, value) => {
-                let merge = name.clone();
-                self.stage(Op::Set { name, value }, Some(merge.as_str()))
+            Message::GameLoaded(seq, loaded) => {
+                if seq == self.seq {
+                    self.groups = groups(attr_edit::game_of(Some(&loaded)));
+                }
+                Action::none()
             }
-            Message::Remove(name) => self.stage(Op::Remove { name }, None),
+            Message::Set(name, value) => self.set(name, value),
+            Message::Remove(name) => {
+                self.draft = None;
+                self.stage(Op::Remove { name }, None)
+            }
             Message::OpenAdd => {
                 self.adding = Some(NewSetting::default());
                 Action::none()
@@ -168,6 +272,41 @@ impl State {
                 Action::none()
             }
             Message::Applied(applied) => self.finish_apply(applied),
+        }
+    }
+
+    fn row(&self, name: &str) -> Option<&Row> {
+        self.groups
+            .iter()
+            .flat_map(|group| &group.rows)
+            .find(|row| row.entry.name == name)
+    }
+
+    /// The game writes only values that differ from the default, so setting the default
+    /// removes the entry instead.
+    fn set(&mut self, name: String, value: String) -> Action<Message> {
+        let row = self.row(&name);
+        let to_default = row
+            .and_then(|row| row.default.as_deref())
+            .is_some_and(|default| attr_edit::same_as_default(&value, default));
+        let is_typed = row.is_some_and(|row| {
+            !matches!(row.entry.kind, LayoutKind::Toggle | LayoutKind::Choice(_))
+        });
+        self.draft = (to_default && is_typed).then(|| (name.clone(), value.clone()));
+        if !to_default {
+            let merge = name.clone();
+            return self.stage(Op::Set { name, value }, Some(merge.as_str()));
+        }
+        let Some(edits) = self.attrs.edits() else {
+            return Action::none();
+        };
+        if edits.base().get(&name).is_some() {
+            let merge = name.clone();
+            self.stage(Op::Remove { name }, Some(merge.as_str()))
+        } else if edits.current().get(&name).is_some() {
+            self.stage(Op::Remove { name }, None)
+        } else {
+            Action::none()
         }
     }
 
@@ -277,12 +416,14 @@ impl State {
             edits.discard();
         }
         self.adding = None;
+        self.draft = None;
     }
 
     pub fn undo(&mut self, _ctx: &Context) -> Action<Message> {
         if let Some(edits) = self.attrs.edits_mut() {
             edits.undo();
         }
+        self.draft = None;
         Action::none()
     }
 
@@ -322,13 +463,13 @@ impl State {
         if !doc.editable && !self.attrs.is_away() {
             body = body.push(banner(ToastKind::Warning, attr_edit::NOT_RECOGNISED, None));
         }
-        for group in attrs::groups() {
-            let items: Vec<Element<'a, Message>> = attrs::all()
+        for group in &self.groups {
+            let items: Vec<Element<'a, Message>> = group
+                .rows
                 .iter()
-                .filter(|attr| attr.group == group)
-                .map(|attr| known_row(doc, attr))
+                .map(|row| known_row(doc, row, self.draft.as_ref()))
                 .collect();
-            body = body.push(section(group, rows(items)));
+            body = body.push(section(&group.title, rows(items)));
         }
         body.push(section(OTHER_SETTINGS, rows(self.other_rows(doc))))
             .into()
@@ -371,7 +512,7 @@ impl State {
         };
         let name = adding.name.trim();
         let ready = !name.is_empty();
-        let note = (ready && !attrs::is_comms_related(name) && attrs::find(name).is_none())
+        let note = (ready && !is_comms_related(name) && options::entry(name).is_none())
             .then_some(ELSEWHERE);
         let mut value =
             text_field("Value", &adding.value, Message::AddValue).width(layout::CONTROL_WIDTH);
@@ -404,22 +545,35 @@ impl State {
     }
 }
 
-fn known_row<'a>(doc: Doc<'a>, attr: &'static KnownAttr) -> Element<'a, Message> {
-    let current = doc.get(&attr.name);
-    let base = doc.was(&attr.name);
-    let name = attr.name.clone();
+fn known_row<'a>(
+    doc: Doc<'a>,
+    row: &'a Row,
+    draft: Option<&'a (String, String)>,
+) -> Element<'a, Message> {
+    let name = &row.entry.name;
+    let drafted = draft
+        .filter(|(drafted, _)| drafted == name)
+        .map(|(_, value)| value.as_str());
+    let current = doc.get(name);
+    let base = doc.was(name);
+    let key = name.clone();
     let on_set = doc
         .editable
-        .then_some(move |value: String| Message::Set(name.clone(), value));
-    let control = typed::control(kind_of(attr), current, attr.default.as_deref(), on_set);
+        .then_some(move |value: String| Message::Set(key.clone(), value));
+    let control = typed::control(
+        kind_of(row),
+        drafted.or(current),
+        row.default.as_deref(),
+        on_set,
+    );
     optional_row(
         OptionalRow {
-            label: &attr.label,
-            name: Some(&attr.name),
-            hint: hint_of(attr),
+            label: &row.label,
+            name: Some(name),
+            hint: hint_of(row.entry),
             set: current.is_some(),
             was: was(base, current),
-            remove: doc.editable.then(|| Message::Remove(attr.name.clone())),
+            remove: doc.editable.then(|| Message::Remove(name.clone())),
         },
         control,
     )
@@ -456,7 +610,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn other_settings_are_comms_related_and_not_in_the_catalogue() {
+    fn other_settings_are_comms_related_and_not_in_the_layout() {
         assert!(is_other("VoipPushToTalk"));
         assert!(!is_other("HeadtrackingToggle"));
         assert!(!is_other("FOV"));
@@ -464,8 +618,51 @@ mod tests {
 
     #[test]
     fn source_gets_the_unconfirmed_note() {
-        let source = attrs::find(SOURCE).unwrap();
+        let source = options::entry(SOURCE).unwrap();
         assert_eq!(hint_of(source), Some(SOURCE_HINT));
-        assert!(matches!(kind_of(source), Kind::Number));
+        let row = row_of(source, None);
+        assert!(matches!(kind_of(&row), Kind::Number));
+        assert_eq!(row.label, "Source");
+    }
+
+    #[test]
+    fn groups_follow_the_layout_sections_with_fallback_wording() {
+        let groups = groups(None);
+        let titles: Vec<&str> = groups.iter().map(|g| g.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Head tracking",
+                "Head tracking: when it is off",
+                "Head tracking: third person"
+            ]
+        );
+        let count: usize = groups.iter().map(|g| g.rows.len()).sum();
+        assert_eq!(count, 18);
+        let walking = groups
+            .iter()
+            .flat_map(|g| &g.rows)
+            .find(|r| r.entry.name == "HeadtrackingDisableDuringWalking")
+            .unwrap();
+        assert_eq!(walking.default.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn is_comms_related_matches_keywords_case_insensitively() {
+        for name in [
+            "VoipVolume",
+            "MicThreshold",
+            "FOIPEnabled",
+            "HMDMode",
+            "FacewareCamera",
+            "CommsChannel",
+            "VoiceActivation",
+            "HEADTRACKINGSOURCE",
+        ] {
+            assert!(is_comms_related(name), "{name}");
+        }
+        for name in ["Brightness", "FOV", ""] {
+            assert!(!is_comms_related(name), "{name}");
+        }
     }
 }

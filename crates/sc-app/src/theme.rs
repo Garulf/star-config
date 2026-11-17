@@ -42,6 +42,8 @@ pub mod layout {
     pub const ROW_ACTION_WIDTH: f32 = 32.0;
     /// A dense list row that holds a text field.
     pub const EDIT_ROW_HEIGHT: f32 = 48.0;
+    /// A line of the Game settings list: a label, a name and up to two hint lines.
+    pub const GAME_ROW_HEIGHT: f32 = 64.0;
     pub const NUMBER_WIDTH: f32 = 96.0;
     pub const VALUE_WIDTH: f32 = 40.0;
     pub const WIDE_CONTROL_WIDTH: f32 = 360.0;
@@ -965,8 +967,51 @@ pub mod binds {
     pub const CAPTURE_HEIGHT: f32 = 72.0;
     pub const QUICK_PICK_WIDTH: f32 = 40.0;
     pub const EDIT_SIDE_WIDTH: f32 = 320.0;
-    pub const ACTION_PORTION: u16 = 2;
-    pub const DEVICE_PORTION: u16 = 1;
+    pub const ACTION_PORTION: u16 = 12;
+    pub const KEYBOARD_PORTION: u16 = 9;
+    pub const MOUSE_PORTION: u16 = 7;
+    pub const GAMEPAD_PORTION: u16 = 7;
+    pub const JOYSTICK_PORTION: u16 = 12;
+}
+
+/// The Advanced controls view of the keybinds screen.
+pub mod advanced {
+    use super::space;
+    use iced::Padding;
+
+    pub const INDENT: f32 = space::LG;
+    pub const VALUE_WIDTH: f32 = 96.0;
+    pub const AXIS_SLIDER_WIDTH: f32 = 100.0;
+    pub const AXIS_SLIDER_CELL: f32 = 240.0;
+    pub const AXIS_NUMBER_CELL: f32 = 164.0;
+    pub const PLOT_WIDTH: f32 = 220.0;
+    pub const PLOT_HEIGHT: f32 = 120.0;
+    pub const PLOT_GAP: f32 = 2.0;
+    pub const NUMBER_FIELD_WIDTH: f32 = 120.0;
+    pub const RESET_WIDTH: f32 = 72.0;
+    pub const ICON_BUTTON: f32 = super::layout::ICON + 2.0 * space::SM;
+    pub const LIST_ITEM_PADDING: Padding = Padding {
+        top: space::SM,
+        right: space::LG,
+        bottom: space::SM,
+        left: space::LG,
+    };
+    pub const CONTROL_ROW_PADDING: Padding = Padding {
+        top: space::XS,
+        right: space::LG,
+        bottom: space::XS,
+        left: space::XS,
+    };
+}
+
+/// One bar of a response curve plot.
+pub fn plot_bar(theme: &Theme) -> container::Style {
+    let p = tokens(theme);
+    container::Style {
+        background: Some(mix(p.surface_raised, p.accent, 0.7).into()),
+        border: border::rounded(radius::SM / 2.0),
+        ..container::Style::default()
+    }
 }
 
 /// A clickable bind cell in the keybinds table.

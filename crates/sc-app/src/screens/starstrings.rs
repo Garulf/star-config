@@ -202,6 +202,7 @@ impl State {
             }
             Message::Installed(origin, Ok((name, snapshot))) => {
                 self.work = None;
+                ctx.game_data().forget(&origin.channel);
                 Action::task(self.survey_task(ctx)).with_toast(
                     Toast::success(format!("Installed StarStrings {name}"))
                         .with_undo_in(vec![origin.undo(snapshot)]),
@@ -211,6 +212,7 @@ impl State {
             Message::UninstallConfirmed => self.start_uninstall(ctx),
             Message::Uninstalled(origin, Ok(snapshot)) => {
                 self.work = None;
+                ctx.game_data().forget(&origin.channel);
                 Action::task(self.survey_task(ctx)).with_toast(
                     Toast::success("Removed StarStrings").with_undo_in(vec![origin.undo(snapshot)]),
                 )

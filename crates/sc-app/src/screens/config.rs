@@ -1,11 +1,14 @@
+mod game;
 mod labels;
 mod text_check;
 
 use super::attr_edit::{self, AttrFile, Doc};
 use super::edits::{self, Carry, Edits, Pending, Target, Written, changed_keys};
 use super::typed::{self, Kind};
-use super::words::{GAME_RUNNING, words};
+pub use super::words::TRY_AGAIN;
+use super::words::{GAME_DATA_LOADING, GAME_RUNNING, words};
 use crate::context::Context;
+use crate::game_data::Loaded as GameLoaded;
 use crate::screen::{Action, Origin, Screen, Toast, ToastKind};
 use crate::theme::{self, ButtonKind, layout, size, space};
 use crate::widgets::{
@@ -18,10 +21,12 @@ use iced::widget::{Column, column, container, text_editor};
 use iced::{Alignment, Element, Length, Task};
 use sc_core::attributes::{self, Attributes};
 use sc_core::catalog::cvars::{self, Cvar, CvarKind};
+use sc_core::catalog::layout as options_layout;
 use sc_core::error::Result;
 use sc_core::install::Channel;
 use sc_core::staging::{Document, Staged};
 use sc_core::usercfg::{Op, UserCfg};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -29,6 +34,12 @@ const SNAPSHOT_LABEL: &str = "Config changes";
 const SUBTITLE: &str = "The settings files the game reads for this channel.";
 const MISSING_CFG: &str = "This channel has no user.cfg yet. Applying a change creates it.";
 const GAME_CAPTION: &str = "Every setting the game stores for this channel. Head tracking and comms have their own screen.";
+const LISTED_CAPTION: &str = "Every setting this game version has. A marked row differs from the game's default, and the arrow puts the default back.";
+const GAME_NOTE: &str = "Game data unavailable: showing only the settings stored in your file.";
+pub const OVERRIDDEN_BY_CFG: &str =
+    "user.cfg sets this at every launch, so changes here do not stick.";
+pub const OTHER_GROUP: &str = "Other";
+pub const NOT_IN_BUILD_GROUP: &str = "Not in this game version";
 const NOT_UTF8: &str = "This file has characters that are not UTF-8, so it can only be edited as settings, not as text.";
 const OTHER_LINES: &str = "Other lines in this file";
 const TEXT_KEY: &str = "\u{0}text";
@@ -117,6 +128,11 @@ pub struct State {
     cfg: CfgFile,
     attrs: AttrFile,
     other_lines: Vec<String>,
+    game: Option<GameLoaded>,
+    game_note: Option<String>,
+    lines: Vec<game::Line>,
+    /// What was typed into a field whose value is the default, which the file does not keep.
+    draft: Option<(String, String)>,
     applying: bool,
     cfg_query: String,
     attr_query: String,
@@ -139,6 +155,9 @@ pub enum Message {
     TextView(bool),
     TextEdited(text_editor::Action),
     SetAttr(String, String),
+    ResetAttr(String),
+    GameLoaded(u64, GameLoaded),
+    RetryGameData,
     Scrolled(f32),
     Applied(Carry<Applied>),
 }
@@ -210,7 +229,7 @@ fn kind_of(cvar: &Cvar) -> Kind<'_> {
             step: (max - min) / 100.0,
         },
         CvarKind::Float { .. } => Kind::Number,
-        CvarKind::Choice(options) => Kind::Choice(options),
+        CvarKind::Choice(options) => Kind::Choice(Cow::Borrowed(options)),
         CvarKind::Text if numeric_default(cvar) => Kind::Number,
         CvarKind::Text => Kind::Text,
     }
@@ -246,6 +265,10 @@ impl State {
             cfg: CfgFile::Loading,
             attrs: AttrFile::Loading,
             other_lines: Vec::new(),
+            game: None,
+            game_note: None,
+            lines: Vec::new(),
+            draft: None,
             applying: false,
             cfg_query: String::new(),
             attr_query: String::new(),
@@ -266,23 +289,36 @@ impl State {
             self.other_lines.clear();
             self.text = None;
             self.applying = false;
+            self.draft = None;
+        }
+        if !same_channel {
+            self.game = None;
+            self.game_note = None;
+            self.lines.clear();
         }
         let Some(channel) = channel else {
             self.channel = None;
             return Task::none();
         };
         let seq = self.seq;
-        work::background(
-            move || Carry::new(load(&channel)),
-            move |loaded| Message::Loaded(seq, loaded),
-        )
+        let (cached, read_game) = attr_edit::game_data(ctx);
+        if cached.is_some() {
+            self.game = cached;
+        }
+        Task::batch([
+            work::background(
+                move || Carry::new(load(&channel)),
+                move |loaded| Message::Loaded(seq, loaded),
+            ),
+            read_game.map(move |loaded| Message::GameLoaded(seq, loaded)),
+        ])
     }
 
     fn cfg_away(&self) -> bool {
         self.cfg.edits().is_some_and(Edits::is_away)
     }
 
-    pub fn update(&mut self, message: Message, _ctx: &Context) -> Action<Message> {
+    pub fn update(&mut self, message: Message, ctx: &Context) -> Action<Message> {
         match message {
             Message::Loaded(seq, loaded) => {
                 if seq == self.seq
@@ -294,9 +330,18 @@ impl State {
                     self.attrs = loaded.attrs;
                     self.cfg_changed();
                     self.refresh_text();
+                    self.refresh_lines();
                 }
                 Action::none()
             }
+            Message::GameLoaded(seq, loaded) => {
+                if seq == self.seq {
+                    self.game = Some(loaded);
+                    self.refresh_lines();
+                }
+                Action::none()
+            }
+            Message::RetryGameData => Action::task(self.retry_game(ctx)),
             Message::Tab(tab) => {
                 self.tab = tab;
                 Action::none()
@@ -335,15 +380,10 @@ impl State {
                 Action::none()
             }
             Message::TextEdited(action) => self.edit_text(action),
-            Message::SetAttr(name, value) => {
-                let Some(edits) = self.attrs.edits_mut() else {
-                    return Action::none();
-                };
-                let merge = name.clone();
-                match edits.stage(attributes::Op::Set { name, value }, Some(merge.as_str())) {
-                    Ok(()) => Action::none(),
-                    Err(err) => Action::toast(stage_error(&err)),
-                }
+            Message::SetAttr(name, value) => self.set_attr(name, value),
+            Message::ResetAttr(name) => {
+                self.draft = None;
+                self.stage_attr(attributes::Op::Remove { name }, None)
             }
             Message::Scrolled(offset) => {
                 self.list.offset = offset;
@@ -378,6 +418,83 @@ impl State {
             Err(_) => Action::toast(Toast::error(
                 "That name cannot be used. A name cannot be empty or contain spaces, quotes, = or ;.",
             )),
+        }
+    }
+
+    fn set_attr(&mut self, name: String, value: String) -> Action<Message> {
+        let to_default = game::default_of(&self.lines, &name)
+            .is_some_and(|default| game::same_as_default(&value, default));
+        self.draft = self
+            .keep_draft(&name, &value)
+            .then(|| (name.clone(), value.clone()));
+        if !to_default {
+            let merge = name.clone();
+            return self.stage_attr(attributes::Op::Set { name, value }, Some(merge.as_str()));
+        }
+        let Some(edits) = self.attrs.edits() else {
+            return Action::none();
+        };
+        if edits.base().get(&name).is_some() {
+            let merge = name.clone();
+            self.stage_attr(attributes::Op::Remove { name }, Some(merge.as_str()))
+        } else if edits.current().get(&name).is_some() {
+            self.stage_attr(attributes::Op::Remove { name }, None)
+        } else {
+            Action::none()
+        }
+    }
+
+    fn keep_draft(&self, name: &str, value: &str) -> bool {
+        let typed = self.lines.iter().any(
+            |line| matches!(line, game::Line::Setting(row) if row.name == name && row.is_typed()),
+        );
+        let default = game::default_of(&self.lines, name);
+        typed && default.is_some_and(|default| game::same_as_default(value, default))
+    }
+
+    fn stage_attr(&mut self, op: attributes::Op, merge: Option<&str>) -> Action<Message> {
+        let Some(edits) = self.attrs.edits_mut() else {
+            return Action::none();
+        };
+        match edits.stage(op, merge) {
+            Ok(()) => Action::none(),
+            Err(err) => Action::toast(stage_error(&err)),
+        }
+    }
+
+    fn refresh_lines(&mut self) {
+        let lines = match attr_edit::game_of(self.game.as_ref()) {
+            Some(game) => {
+                let stale = self.attrs.doc().map_or_else(Vec::new, |doc| {
+                    attr_edit::names_with_removed(&doc, |name| game.setting(name).is_none())
+                });
+                game::lines(game, &options_layout::place(game), &stale)
+            }
+            None => Vec::new(),
+        };
+        self.lines = lines;
+        self.game_note = match self.game.as_deref() {
+            Some(Err(unavailable)) => Some(format!("{GAME_NOTE} {}", unavailable.reason())),
+            _ => None,
+        };
+    }
+
+    /// Forgets a failed read, so a `Data.p4k` that was locked or still downloading is read again.
+    fn retry_game(&mut self, ctx: &Context) -> Task<Message> {
+        let Some(channel) = ctx.channel.as_ref() else {
+            return Task::none();
+        };
+        if !matches!(self.game.as_deref(), Some(Err(_))) {
+            return Task::none();
+        }
+        ctx.game_data().forget(channel);
+        self.game = None;
+        self.refresh_lines();
+        let (cached, read) = attr_edit::game_data(ctx);
+        let seq = self.seq;
+        match cached {
+            Some(loaded) => Task::done(Message::GameLoaded(seq, loaded)),
+            None => read.map(move |loaded| Message::GameLoaded(seq, loaded)),
         }
     }
 
@@ -516,6 +633,8 @@ impl State {
             }
             self.cfg_changed();
             self.refresh_text();
+            self.draft = None;
+            self.refresh_lines();
         }
         let toast = if applied.seq == self.seq {
             edits::toast_for(&applied.result, applied.count, &applied.origin)
@@ -534,8 +653,10 @@ impl State {
         }
         self.new_name.clear();
         self.new_value.clear();
+        self.draft = None;
         self.cfg_changed();
         self.refresh_text();
+        self.refresh_lines();
     }
 
     pub fn undo(&mut self, _ctx: &Context) -> Action<Message> {
@@ -550,6 +671,8 @@ impl State {
                 if let Some(edits) = self.attrs.edits_mut() {
                     edits.undo();
                 }
+                self.draft = None;
+                self.refresh_lines();
             }
         }
         Action::none()
@@ -713,8 +836,10 @@ impl State {
             )],
             None => Vec::new(),
         };
+        let listed = attr_edit::game_of(self.game.as_ref()).is_some();
+        let caption = if listed { LISTED_CAPTION } else { GAME_CAPTION };
         let body: Element<'_, Message> = match (&self.attrs, doc) {
-            (_, Some(doc)) => self.game_list(doc),
+            (_, Some(doc)) => self.game_body(doc),
             (AttrFile::Missing, None) => {
                 empty_state(attr_edit::MISSING_TITLE, attr_edit::MISSING_BODY, None)
             }
@@ -726,13 +851,65 @@ impl State {
             Screen::Config.label(),
             Some(SUBTITLE),
             trailing,
-            column![self.tabs(), hint(GAME_CAPTION), body]
+            column![self.tabs(), hint(caption), body]
                 .spacing(space::LG)
                 .height(Length::Fill),
         )
     }
 
-    fn game_list<'a>(&'a self, doc: Doc<'a>) -> Element<'a, Message> {
+    fn game_body<'a>(&'a self, doc: Doc<'a>) -> Element<'a, Message> {
+        match self.game.as_deref() {
+            None => muted(GAME_DATA_LOADING).into(),
+            Some(Ok(_)) => self.game_listing(doc),
+            Some(Err(_)) => self.game_list(doc, self.game_note.as_deref()),
+        }
+    }
+
+    fn game_listing<'a>(&'a self, doc: Doc<'a>) -> Element<'a, Message> {
+        let query = self.attr_query.trim().to_lowercase();
+        let lines = self.lines.as_slice();
+        let shown = game::shown(lines, doc, &query);
+        let matched = game::matched_count(lines, &shown);
+        let mut body = Column::new().spacing(space::MD).height(Length::Fill);
+        if !doc.editable && !self.attrs.is_away() {
+            body = body.push(banner(ToastKind::Warning, attr_edit::NOT_RECOGNISED, None));
+        }
+        body = body.push(muted(attr_edit::count_line(
+            matched,
+            game::setting_count(lines),
+        )));
+        if matched == 0 {
+            return body
+                .push(empty_state(
+                    "Nothing matches",
+                    "No game setting has that name, label or value.",
+                    None,
+                ))
+                .into();
+        }
+        let view = game::View {
+            doc,
+            cfg: self.cfg.edits().map(|edits| edits.current()),
+            draft: self.draft.as_ref(),
+        };
+        let list = virtual_list(
+            &self.list,
+            shown.len(),
+            layout::GAME_ROW_HEIGHT,
+            Message::Scrolled,
+            move |row| game::line(&lines[shown[row]], view),
+        );
+        body.push(
+            container(list)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(theme::card)
+                .clip(true),
+        )
+        .into()
+    }
+
+    fn game_list<'a>(&'a self, doc: Doc<'a>, note: Option<&'a str>) -> Element<'a, Message> {
         let query = self.attr_query.trim().to_lowercase();
         let current = doc.current;
         let shown: Vec<usize> = current
@@ -747,6 +924,13 @@ impl State {
             .collect();
         let count = attr_edit::count_line(shown.len(), current.len());
         let mut body = Column::new().spacing(space::MD).height(Length::Fill);
+        if let Some(note) = note {
+            body = body.push(banner(
+                ToastKind::Info,
+                note,
+                Some((TRY_AGAIN, Message::RetryGameData)),
+            ));
+        }
         if !doc.editable && !self.attrs.is_away() {
             body = body.push(banner(ToastKind::Warning, attr_edit::NOT_RECOGNISED, None));
         }

@@ -858,6 +858,102 @@ pub fn demo_game_files(ctx: &Context) {
     }
 }
 
+// Game data ----------------------------------------------------------------------
+
+fn game_data_sources() -> sc_core::defaults::Sources {
+    sc_core::defaults::Sources {
+        profile: include_str!("../tests/fixtures/game_data/defaultProfile.xml").into(),
+        attributes: include_str!("../tests/fixtures/game_data/attributes.xml").into(),
+        key_names: include_str!("../tests/fixtures/game_data/keybinding_localization.xml").into(),
+        strings: include_str!("../tests/fixtures/game_data/global.ini").into(),
+    }
+}
+
+/// Fills the game-data cache of every channel that reports a build, so a screen's load
+/// reads the small fixture defaults and no test needs a real `Data.p4k`. A channel without
+/// a `Data.p4k` gets a placeholder, which is never opened. The cache is stamped with the
+/// archive's size and date as they are now, so call this after [`demo_game_files`] and
+/// again after a channel's build changes.
+pub fn seed_game_data(ctx: &Context) {
+    let sources = game_data_sources();
+    for channel in &ctx.channels {
+        if channel.build_id().is_none() {
+            continue;
+        }
+        let p4k = channel.dir.join("Data.p4k");
+        if sc_core::install::resolve_ci(&channel.dir, "Data.p4k").is_none() {
+            fs::write(&p4k, b"placeholder, not a real Data.p4k").unwrap();
+        }
+        sc_core::defaults::seed_cache(channel, &ctx.dirs.game_data(), &sources).unwrap();
+    }
+}
+
+/// As [`seed_game_data`], for a test that brings its own default settings and strings. The
+/// controls and key names stay the shared fixture's.
+pub fn seed_game_data_with(ctx: &Context, attributes: &str, strings: &str) {
+    let sources = sc_core::defaults::Sources {
+        attributes: attributes.into(),
+        strings: strings.into(),
+        ..game_data_sources()
+    };
+    for channel in &ctx.channels {
+        if channel.build_id().is_none() {
+            continue;
+        }
+        let p4k = channel.dir.join("Data.p4k");
+        if sc_core::install::resolve_ci(&channel.dir, "Data.p4k").is_none() {
+            fs::write(&p4k, b"placeholder, not a real Data.p4k").unwrap();
+        }
+        sc_core::defaults::seed_cache(channel, &ctx.dirs.game_data(), &sources).unwrap();
+    }
+}
+
+// Keybinds game data -------------------------------------------------------------
+
+/// Defaults for the demo keybinds' action maps: labels, categories and default binds, a
+/// few actions the game's menu hides, one label key `global.ini` lacks, and one demo action
+/// the build no longer has (`v_mining_use_consumable3`).
+fn keybinds_game_sources() -> sc_core::defaults::Sources {
+    sc_core::defaults::Sources {
+        profile: include_str!("../tests/fixtures/keybinds/game/defaultProfile.xml").into(),
+        attributes: include_str!("../tests/fixtures/game_data/attributes.xml").into(),
+        key_names: include_str!("../tests/fixtures/keybinds/game/keybinding_localization.xml")
+            .into(),
+        strings: include_str!("../tests/fixtures/keybinds/game/global.ini").into(),
+    }
+}
+
+/// Like [`seed_game_data`], with the keybinds defaults.
+pub fn seed_keybinds_game_data(ctx: &Context) {
+    let sources = keybinds_game_sources();
+    for channel in ctx.channels.iter().filter(|c| c.build_id().is_some()) {
+        if sc_core::install::resolve_ci(&channel.dir, "Data.p4k").is_none() {
+            fs::write(channel.dir.join("Data.p4k"), b"placeholder").unwrap();
+        }
+        sc_core::defaults::seed_cache(channel, &ctx.dirs.game_data(), &sources).unwrap();
+    }
+}
+
+/// Game data for the README pictures: the keybinds fixture's controls and key names, and the
+/// settings fixture's defaults, with both fixtures' strings.
+pub fn seed_demo_game_data(ctx: &Context) {
+    let strings = [
+        include_str!("../tests/fixtures/game_data/global.ini"),
+        include_str!("../tests/fixtures/keybinds/game/global.ini").trim_start_matches('\u{feff}'),
+    ]
+    .join("\n");
+    let sources = sc_core::defaults::Sources {
+        strings,
+        ..keybinds_game_sources()
+    };
+    for channel in ctx.channels.iter().filter(|c| c.build_id().is_some()) {
+        if sc_core::install::resolve_ci(&channel.dir, "Data.p4k").is_none() {
+            fs::write(channel.dir.join("Data.p4k"), b"placeholder").unwrap();
+        }
+        sc_core::defaults::seed_cache(channel, &ctx.dirs.game_data(), &sources).unwrap();
+    }
+}
+
 // Shader caches ------------------------------------------------------------------
 
 pub fn shader_cache_dir(temp: &Path) -> PathBuf {

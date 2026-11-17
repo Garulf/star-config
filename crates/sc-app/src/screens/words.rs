@@ -10,6 +10,10 @@ pub const GAME_RUNNING: &str =
 pub const ROLLBACK_FAILED: &str = "Writing failed, and putting the earlier files back failed too. \
     Some files may have changed. The snapshot on the Backups screen holds the originals.";
 
+pub const GAME_DATA_LOADING: &str =
+    "Reading the game's controls and settings. The first time after a patch takes a few seconds.";
+pub const TRY_AGAIN: &str = "Try again";
+
 /// A core error in words for the user.
 pub fn words(err: &Error) -> String {
     match err {

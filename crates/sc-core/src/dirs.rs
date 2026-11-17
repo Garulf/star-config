@@ -44,6 +44,10 @@ impl AppDirs {
     pub fn downloads(&self) -> PathBuf {
         self.cache.join("downloads")
     }
+
+    pub fn game_data(&self) -> PathBuf {
+        self.cache.join("game-data")
+    }
 }
 
 #[cfg(test)]
@@ -59,5 +63,6 @@ mod tests {
         assert_eq!(dirs.shader_backups(), root.join("data/shader-backups"));
         assert_eq!(dirs.thumbnails(), root.join("cache/thumbnails"));
         assert_eq!(dirs.downloads(), root.join("cache/downloads"));
+        assert_eq!(dirs.game_data(), root.join("cache/game-data"));
     }
 }

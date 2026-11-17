@@ -14,7 +14,7 @@ use sc_app::app::{App, Message};
 use sc_app::screen::Screen;
 use sc_app::screens::{backups, channels, comms, config, keybinds, maintenance, starstrings};
 use sc_app::theme;
-use sc_core::actionmaps::{DeviceKind, Slot};
+use sc_core::actionmaps::DeviceKind;
 use sc_core::channels::{CopyPlan, PlannedFile};
 use sc_core::settings::ThemeChoice;
 use std::fs;
@@ -63,21 +63,21 @@ fn stage(app: &mut App, screen: Screen, temp: &Path) {
             }),
         ),
         Screen::Keybinds => {
-            let cell = |action: &str, kind, instance| {
+            let cell = |action: &str, kind| {
                 Message::Keybinds(keybinds::Message::Select(keybinds::CellRef {
                     map: "spaceship_weapons".into(),
                     action: action.into(),
-                    slot: Slot { kind, instance },
+                    kind,
                 }))
             };
             feed(
                 app,
                 [
                     Message::Keybinds(keybinds::Message::PickMap(Some("spaceship_weapons".into()))),
-                    cell("v_attack1_group1", DeviceKind::Mouse, 1),
+                    cell("v_attack1_group1", DeviceKind::Mouse),
                     Message::Keybinds(keybinds::Message::Typed("mouse5".into())),
                     Message::Keybinds(keybinds::Message::Set),
-                    cell("v_weapon_launch_missile", DeviceKind::Joystick, 1),
+                    cell("v_weapon_launch_missile", DeviceKind::Joystick),
                 ],
             );
         }
@@ -152,7 +152,9 @@ fn show_plan(app: &mut App) {
 }
 
 fn demo_app(temp: &Path) -> App {
-    let mut app = App::with(testkit::demo_story(temp));
+    let ctx = testkit::demo_story(temp);
+    testkit::seed_demo_game_data(&ctx);
+    let mut app = App::with(ctx);
     open(&mut app, Screen::Overview);
     app
 }

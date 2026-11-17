@@ -38,6 +38,26 @@ fn fixture_with(attributes: Option<&str>, theme: ThemeChoice) -> Fixture {
     }
 }
 
+fn game_fixture(attributes: &str) -> Fixture {
+    let temp = tempfile::tempdir().unwrap();
+    let ctx = testkit::context_with_channels(temp.path(), &["LIVE"]);
+    let channel = ctx.channel.clone().unwrap();
+    testkit::write_build(&channel, "4.1.0", "1234");
+    testkit::seed_game_data_with(
+        &ctx,
+        include_str!("fixtures/config_game/attributes.xml"),
+        include_str!("fixtures/config_game/global.ini"),
+    );
+    testkit::write_channel_files(&channel, None, Some(attributes.as_bytes()));
+    let mut app = App::with(ctx);
+    feed(&mut app, [Message::Navigate(Screen::Comms)]);
+    Fixture {
+        _temp: temp,
+        app,
+        channel,
+    }
+}
+
 fn fixture(attributes: &str) -> Fixture {
     fixture_with(Some(attributes), ThemeChoice::Dark)
 }
@@ -93,6 +113,34 @@ fn catalogue_groups_and_typed_controls_render() {
 }
 
 #[test]
+fn comms_labels_survive_without_game_data() {
+    let fx = fixture(&demo_attributes());
+    for text in [
+        "Source",
+        "Enabled",
+        "Position smoothing",
+        "Off while seated",
+        "Off in inventory",
+        "HEAD TRACKING: THIRD PERSON",
+    ] {
+        assert!(has(&fx.app, text), "{text}");
+    }
+}
+
+#[test]
+fn comms_takes_in_game_labels_and_defaults_from_the_build() {
+    let fx = game_fixture(&demo_attributes());
+    assert!(has(&fx.app, "Tracking device"), "label from the build");
+    assert!(has(&fx.app, "Smoothing of position"));
+    assert!(
+        has(&fx.app, "Enabled"),
+        "no label key: our fallback wording"
+    );
+    assert!(!has(&fx.app, "Source"));
+    assert!(has(&fx.app, "HEAD TRACKING: WHEN IT IS OFF"));
+}
+
+#[test]
 fn headtracking_source_is_a_plain_number_with_the_note() {
     let fx = fixture(&demo_attributes());
     assert!(has(&fx.app, SOURCE_HINT));
@@ -115,6 +163,37 @@ fn setting_a_missing_attribute_adds_the_element() {
     assert_eq!(
         without_line(&written, "HeadtrackingInactivityTime"),
         original
+    );
+}
+
+#[test]
+fn setting_the_default_removes_the_entry_like_the_game() {
+    let original = demo_attributes();
+    let mut fx = game_fixture(&original);
+    send(&mut fx, [set("HeadtrackingInactivityTime", "2")]);
+    assert_eq!(pending(&fx), 1);
+    send(
+        &mut fx,
+        [
+            set("HeadtrackingDisableDuringWalking", "0"),
+            set("HeadtrackingDisableDuringWalking", "1"),
+        ],
+    );
+    apply(&mut fx);
+    let written = on_disk(&fx);
+    for gone in [
+        "HeadtrackingInactivityTime",
+        "HeadtrackingDisableDuringWalking",
+    ] {
+        assert!(!written.contains(gone), "{gone}");
+    }
+    assert_eq!(
+        without_line(&written, "\u{0}"),
+        without_line(
+            &without_line(&original, "HeadtrackingInactivityTime"),
+            "HeadtrackingDisableDuringWalking"
+        ),
+        "every other byte is as it was"
     );
 }
 
@@ -197,8 +276,8 @@ fn edits_survive_the_other_screen_applying_first() {
         "{written}"
     );
     assert!(
-        written.contains("<Attr name=\"HeadtrackingToggle\" value=\"0\"/>"),
-        "{written}"
+        !written.contains("HeadtrackingToggle\""),
+        "the default is removed, as the game does: {written}"
     );
     assert_eq!(pending(&fx), 0);
     assert!(fx.app.toasts().last().unwrap().undo.is_some());
