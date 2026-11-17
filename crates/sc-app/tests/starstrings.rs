@@ -407,6 +407,30 @@ fn install_writes_global_ini_and_language_line() {
 }
 
 #[test]
+fn install_and_uninstall_forget_the_channels_game_data() {
+    let http = Arc::new(FakeHttp::good());
+    let mut screen = Harness::live(&http);
+    let live = screen.ctx.channel.clone().unwrap();
+    let store = screen.ctx.game_data();
+    let cache = screen.ctx.dirs.game_data();
+    let read = |store: &sc_app::game_data::GameDataStore| {
+        store.load(&live, &cache);
+        assert!(store.cached(&live).is_some());
+    };
+    read(&store);
+    screen.check_and_install();
+    assert!(
+        store.cached(&live).is_none(),
+        "labels come from the new global.ini"
+    );
+    read(&store);
+    assert_eq!(screen.click("Uninstall"), 1);
+    screen.accept();
+    assert!(!screen.global_ini().exists());
+    assert!(store.cached(&live).is_none());
+}
+
+#[test]
 fn installed_and_current_shows_up_to_date() {
     let http = Arc::new(FakeHttp::good());
     let mut screen = Harness::live(&http);
