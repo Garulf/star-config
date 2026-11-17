@@ -5,6 +5,7 @@
 use super::{Message, NOT_IN_BUILD_GROUP, OTHER_GROUP, OVERRIDDEN_BY_CFG};
 use crate::icons;
 use crate::screens::attr_edit::Doc;
+pub use crate::screens::attr_edit::same_as_default;
 use crate::screens::typed::{self, Kind};
 use crate::theme::{self, Tone, layout, size, space};
 use crate::widgets::{Was, change_marker, divider, heading, hint, icon_toned, label, strong};
@@ -296,18 +297,6 @@ pub fn default_of<'a>(lines: &'a [Line], name: &str) -> Option<&'a str> {
         Line::Setting(row) if row.name == name => row.default.as_deref(),
         _ => None,
     })
-}
-
-/// Whether a typed value is the default's own value, so the game would not store it.
-pub fn same_as_default(value: &str, default: &str) -> bool {
-    let (value, default) = (value.trim(), default.trim());
-    if value == default {
-        return true;
-    }
-    match (value.parse::<f64>(), default.parse::<f64>()) {
-        (Ok(value), Ok(default)) => value == default,
-        _ => false,
-    }
 }
 
 /// What a line needs from the screen to draw itself.

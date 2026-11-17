@@ -167,6 +167,37 @@ fn setting_a_missing_attribute_adds_the_element() {
 }
 
 #[test]
+fn setting_the_default_removes_the_entry_like_the_game() {
+    let original = demo_attributes();
+    let mut fx = game_fixture(&original);
+    send(&mut fx, [set("HeadtrackingInactivityTime", "2")]);
+    assert_eq!(pending(&fx), 1);
+    send(
+        &mut fx,
+        [
+            set("HeadtrackingDisableDuringWalking", "0"),
+            set("HeadtrackingDisableDuringWalking", "1"),
+        ],
+    );
+    apply(&mut fx);
+    let written = on_disk(&fx);
+    for gone in [
+        "HeadtrackingInactivityTime",
+        "HeadtrackingDisableDuringWalking",
+    ] {
+        assert!(!written.contains(gone), "{gone}");
+    }
+    assert_eq!(
+        without_line(&written, "\u{0}"),
+        without_line(
+            &without_line(&original, "HeadtrackingInactivityTime"),
+            "HeadtrackingDisableDuringWalking"
+        ),
+        "every other byte is as it was"
+    );
+}
+
+#[test]
 fn other_settings_lists_only_comms_related_names() {
     let fx = fixture(&demo_attributes());
     assert!(has(&fx.app, "OTHER SETTINGS IN THIS FILE"));
@@ -245,8 +276,8 @@ fn edits_survive_the_other_screen_applying_first() {
         "{written}"
     );
     assert!(
-        written.contains("<Attr name=\"HeadtrackingToggle\" value=\"0\"/>"),
-        "{written}"
+        !written.contains("HeadtrackingToggle\""),
+        "the default is removed, as the game does: {written}"
     );
     assert_eq!(pending(&fx), 0);
     assert!(fx.app.toasts().last().unwrap().undo.is_some());

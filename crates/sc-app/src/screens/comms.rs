@@ -75,6 +75,8 @@ pub struct State {
     channel: Option<PathBuf>,
     attrs: AttrFile,
     groups: Vec<Group>,
+    /// What was typed into a field whose value is the default, which the file does not keep.
+    draft: Option<(String, String)>,
     applying: bool,
     adding: Option<NewSetting>,
 }
@@ -184,6 +186,7 @@ impl State {
             channel: None,
             attrs: AttrFile::Loading,
             groups: groups(None),
+            draft: None,
             applying: false,
             adding: None,
         }
@@ -196,6 +199,7 @@ impl State {
         if !same_channel || self.attrs.is_away() {
             self.attrs = AttrFile::Loading;
             self.applying = false;
+            self.draft = None;
         }
         if !same_channel {
             self.groups = groups(None);
@@ -241,11 +245,11 @@ impl State {
                 }
                 Action::none()
             }
-            Message::Set(name, value) => {
-                let merge = name.clone();
-                self.stage(Op::Set { name, value }, Some(merge.as_str()))
+            Message::Set(name, value) => self.set(name, value),
+            Message::Remove(name) => {
+                self.draft = None;
+                self.stage(Op::Remove { name }, None)
             }
-            Message::Remove(name) => self.stage(Op::Remove { name }, None),
             Message::OpenAdd => {
                 self.adding = Some(NewSetting::default());
                 Action::none()
@@ -268,6 +272,41 @@ impl State {
                 Action::none()
             }
             Message::Applied(applied) => self.finish_apply(applied),
+        }
+    }
+
+    fn row(&self, name: &str) -> Option<&Row> {
+        self.groups
+            .iter()
+            .flat_map(|group| &group.rows)
+            .find(|row| row.entry.name == name)
+    }
+
+    /// The game writes only values that differ from the default, so setting the default
+    /// removes the entry instead.
+    fn set(&mut self, name: String, value: String) -> Action<Message> {
+        let row = self.row(&name);
+        let to_default = row
+            .and_then(|row| row.default.as_deref())
+            .is_some_and(|default| attr_edit::same_as_default(&value, default));
+        let is_typed = row.is_some_and(|row| {
+            !matches!(row.entry.kind, LayoutKind::Toggle | LayoutKind::Choice(_))
+        });
+        self.draft = (to_default && is_typed).then(|| (name.clone(), value.clone()));
+        if !to_default {
+            let merge = name.clone();
+            return self.stage(Op::Set { name, value }, Some(merge.as_str()));
+        }
+        let Some(edits) = self.attrs.edits() else {
+            return Action::none();
+        };
+        if edits.base().get(&name).is_some() {
+            let merge = name.clone();
+            self.stage(Op::Remove { name }, Some(merge.as_str()))
+        } else if edits.current().get(&name).is_some() {
+            self.stage(Op::Remove { name }, None)
+        } else {
+            Action::none()
         }
     }
 
@@ -377,12 +416,14 @@ impl State {
             edits.discard();
         }
         self.adding = None;
+        self.draft = None;
     }
 
     pub fn undo(&mut self, _ctx: &Context) -> Action<Message> {
         if let Some(edits) = self.attrs.edits_mut() {
             edits.undo();
         }
+        self.draft = None;
         Action::none()
     }
 
@@ -423,8 +464,11 @@ impl State {
             body = body.push(banner(ToastKind::Warning, attr_edit::NOT_RECOGNISED, None));
         }
         for group in &self.groups {
-            let items: Vec<Element<'a, Message>> =
-                group.rows.iter().map(|row| known_row(doc, row)).collect();
+            let items: Vec<Element<'a, Message>> = group
+                .rows
+                .iter()
+                .map(|row| known_row(doc, row, self.draft.as_ref()))
+                .collect();
             body = body.push(section(&group.title, rows(items)));
         }
         body.push(section(OTHER_SETTINGS, rows(self.other_rows(doc))))
@@ -501,15 +545,27 @@ impl State {
     }
 }
 
-fn known_row<'a>(doc: Doc<'a>, row: &'a Row) -> Element<'a, Message> {
+fn known_row<'a>(
+    doc: Doc<'a>,
+    row: &'a Row,
+    draft: Option<&'a (String, String)>,
+) -> Element<'a, Message> {
     let name = &row.entry.name;
+    let drafted = draft
+        .filter(|(drafted, _)| drafted == name)
+        .map(|(_, value)| value.as_str());
     let current = doc.get(name);
     let base = doc.was(name);
     let key = name.clone();
     let on_set = doc
         .editable
         .then_some(move |value: String| Message::Set(key.clone(), value));
-    let control = typed::control(kind_of(row), current, row.default.as_deref(), on_set);
+    let control = typed::control(
+        kind_of(row),
+        drafted.or(current),
+        row.default.as_deref(),
+        on_set,
+    );
     optional_row(
         OptionalRow {
             label: &row.label,

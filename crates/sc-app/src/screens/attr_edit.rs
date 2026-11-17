@@ -161,6 +161,18 @@ pub fn unavailable_reason(unavailable: &Unavailable) -> String {
     }
 }
 
+/// Whether a typed value is the default's own value, so the game would not store it.
+pub fn same_as_default(value: &str, default: &str) -> bool {
+    let (value, default) = (value.trim(), default.trim());
+    if value == default {
+        return true;
+    }
+    match (value.parse::<f64>(), default.parse::<f64>()) {
+        (Ok(value), Ok(default)) => value == default,
+        _ => false,
+    }
+}
+
 /// The gate's second half: writing the parsed file back unchanged must give the same bytes.
 fn round_trips(staged: &Staged<Attributes>) -> bool {
     staged.base().to_bytes() == staged.loaded().bytes
