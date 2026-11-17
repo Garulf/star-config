@@ -1,16 +1,26 @@
-use crate::DeviceClass;
+use crate::{DeviceClass, Raw};
 
 const ABS_HAT0X: u16 = 0x10;
 const ABS_HAT3Y: u16 = 0x17;
 const BTN_JOYSTICK: u16 = 0x120;
 const BTN_JOYSTICK_LAST: u16 = 0x12f;
 const BTN_SOUTH: u16 = 0x130;
-const BTN_TOUCH: u16 = 0x14a;
+const BTN_MISC: u16 = 0x100;
+const BTN_DIGI: u16 = 0x140;
+const BTN_DIGI_LAST: u16 = 0x14f;
 const BTN_TRIGGER_HAPPY: u16 = 0x2c0;
 const BTN_TRIGGER_HAPPY_LAST: u16 = 0x2e7;
 const LAST_KEYBOARD_KEY: u16 = 0xff;
+pub const EV_SYN: u16 = 0x00;
+pub const EV_KEY: u16 = 0x01;
+pub const EV_ABS: u16 = 0x03;
+pub const SYN_REPORT: u16 = 0;
+pub const SYN_DROPPED: u16 = 3;
 
-pub fn classify(keys: &[u16], axes: &[u16]) -> Option<DeviceClass> {
+pub fn classify(keys: &[u16], axes: &[u16], accelerometer: bool) -> Option<DeviceClass> {
+    if accelerometer {
+        return None;
+    }
     if keys.contains(&BTN_SOUTH) {
         return Some(DeviceClass::Gamepad);
     }
@@ -18,9 +28,12 @@ pub fn classify(keys: &[u16], axes: &[u16]) -> Option<DeviceClass> {
         (BTN_JOYSTICK..=BTN_JOYSTICK_LAST).contains(k)
             || (BTN_TRIGGER_HAPPY..=BTN_TRIGGER_HAPPY_LAST).contains(k)
     });
-    let letter_key = keys.iter().any(|k| (1..=LAST_KEYBOARD_KEY).contains(k));
-    let touch = keys.contains(&BTN_TOUCH);
-    let plain_axes = !axes.is_empty() && !touch && !letter_key;
+    let non_stick_key = keys.iter().any(|k| {
+        (1..=LAST_KEYBOARD_KEY).contains(k)
+            || (BTN_MISC..BTN_JOYSTICK).contains(k)
+            || (BTN_DIGI..=BTN_DIGI_LAST).contains(k)
+    });
+    let plain_axes = !axes.is_empty() && !non_stick_key;
     (joystick_key || plain_axes).then_some(DeviceClass::Stick)
 }
 
@@ -94,6 +107,72 @@ pub fn hat(code: u16, value: i32, class: DeviceClass) -> Option<String> {
     }
 }
 
+pub struct Layout<'a> {
+    pub class: DeviceClass,
+    pub keys: &'a [u16],
+    pub ranges: &'a [(u16, i32, i32)],
+}
+
+impl Layout<'_> {
+    pub fn axis_reading(&self, code: u16, value: i32) -> Option<Raw> {
+        let name = match self.class {
+            DeviceClass::Stick => stick_axis(code)?,
+            DeviceClass::Gamepad => pad_axis(code)?,
+        };
+        let &(_, min, max) = self.ranges.iter().find(|r| r.0 == code)?;
+        Some(Raw::Axis {
+            name,
+            value,
+            min,
+            max,
+        })
+    }
+
+    pub fn translate(&self, kind: u16, code: u16, value: i32) -> Option<Raw> {
+        match kind {
+            EV_KEY if value == 1 => {
+                let name = match self.class {
+                    DeviceClass::Stick => stick_button(self.keys, code)?,
+                    DeviceClass::Gamepad => pad_button(code)?.to_string(),
+                };
+                Some(Raw::Pressed(name))
+            }
+            EV_ABS => match hat(code, value, self.class) {
+                Some(name) => Some(Raw::Pressed(name)),
+                None => self.axis_reading(code, value),
+            },
+            _ => None,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Batcher {
+    pending: Vec<Raw>,
+    resyncing: bool,
+}
+
+impl Batcher {
+    pub fn feed(
+        &mut self,
+        layout: &Layout,
+        (kind, code, value): (u16, u16, i32),
+    ) -> Option<Vec<Raw>> {
+        if kind == EV_SYN && code == SYN_DROPPED {
+            self.pending.clear();
+            self.resyncing = true;
+        } else if kind == EV_SYN && code == SYN_REPORT {
+            if std::mem::take(&mut self.resyncing) || self.pending.is_empty() {
+                return None;
+            }
+            return Some(std::mem::take(&mut self.pending));
+        } else if !self.resyncing {
+            self.pending.extend(layout.translate(kind, code, value));
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,16 +180,41 @@ mod tests {
     #[test]
     fn classify_by_capabilities() {
         assert_eq!(
-            classify(&[0x130, 0x131, 0x133], &[0, 1]),
+            classify(&[0x130, 0x131, 0x133], &[0, 1], false),
             Some(DeviceClass::Gamepad)
         );
         let joystick: Vec<u16> = (0x120..=0x12f).collect();
-        assert_eq!(classify(&joystick, &[0, 1]), Some(DeviceClass::Stick));
-        assert_eq!(classify(&[0x2c0], &[]), Some(DeviceClass::Stick));
-        assert_eq!(classify(&[30, 48], &[]), None);
-        assert_eq!(classify(&[0x110], &[]), None);
-        assert_eq!(classify(&[0x14a], &[0, 1]), None);
-        assert_eq!(classify(&[], &[0, 1, 6]), Some(DeviceClass::Stick));
+        assert_eq!(
+            classify(&joystick, &[0, 1], false),
+            Some(DeviceClass::Stick)
+        );
+        assert_eq!(classify(&[0x2c0], &[], false), Some(DeviceClass::Stick));
+        assert_eq!(classify(&[30, 48], &[], false), None);
+        assert_eq!(classify(&[0x110], &[], false), None);
+        assert_eq!(classify(&[0x14a], &[0, 1], false), None);
+        assert_eq!(classify(&[], &[0, 1, 6], false), Some(DeviceClass::Stick));
+    }
+
+    #[test]
+    fn classify_rejects_look_alikes() {
+        let tablet_pad: Vec<u16> = (0x100..=0x109).collect();
+        assert_eq!(classify(&tablet_pad, &[0, 1, 8], false), None, "tablet pad");
+        assert_eq!(
+            classify(&[0x110, 0x111], &[0, 1], false),
+            None,
+            "absolute pointer"
+        );
+        assert_eq!(
+            classify(&[], &[0, 1, 2, 3, 4, 5], true),
+            None,
+            "motion sensor"
+        );
+        assert_eq!(classify(&[0x140, 0x14a], &[0, 1], false), None, "tablet");
+        assert_eq!(
+            classify(&[0x130], &[0, 1], true),
+            None,
+            "pad flagged as sensor"
+        );
     }
 
     #[test]
@@ -154,6 +258,7 @@ mod tests {
         assert_eq!(hat(0x10, 1, pad).as_deref(), Some("dpad_right"));
         assert_eq!(hat(0x11, -1, pad).as_deref(), Some("dpad_up"));
         assert_eq!(hat(0x11, 1, pad).as_deref(), Some("dpad_down"));
+        assert_eq!(hat(0x12, 1, pad), None, "second hat is not the d-pad");
         assert_eq!(hat(0x10, 0, stick), None);
         assert_eq!(hat(0x00, 1, stick), None);
     }
@@ -195,5 +300,73 @@ mod tests {
             assert_eq!(pad_axis(code), Some(name), "code {code}");
         }
         assert_eq!(pad_axis(6), None);
+    }
+
+    fn stick_layout() -> Layout<'static> {
+        Layout {
+            class: DeviceClass::Stick,
+            keys: &[0x120, 0x121],
+            ranges: &[(0, 0, 1023), (0x10, -1, 1)],
+        }
+    }
+
+    #[test]
+    fn only_a_fresh_press_counts() {
+        let l = stick_layout();
+        assert_eq!(
+            l.translate(EV_KEY, 0x121, 1),
+            Some(Raw::Pressed("button2".into()))
+        );
+        assert_eq!(l.translate(EV_KEY, 0x121, 2), None, "repeat");
+        assert_eq!(l.translate(EV_KEY, 0x121, 0), None, "release");
+        assert_eq!(l.translate(EV_KEY, 0x122, 1), None, "unknown key");
+    }
+
+    #[test]
+    fn hat_centre_is_not_a_press_and_axes_carry_range() {
+        let l = stick_layout();
+        assert_eq!(l.translate(EV_ABS, 0x10, 0), None);
+        assert_eq!(
+            l.translate(EV_ABS, 0x10, 1),
+            Some(Raw::Pressed("hat1_right".into()))
+        );
+        assert_eq!(
+            l.translate(EV_ABS, 0, 600),
+            Some(Raw::Axis {
+                name: "x",
+                value: 600,
+                min: 0,
+                max: 1023
+            })
+        );
+        assert_eq!(l.translate(EV_ABS, 8, 5), None);
+    }
+
+    #[test]
+    fn batches_end_at_syn_report() {
+        let l = stick_layout();
+        let mut b = Batcher::default();
+        assert_eq!(b.feed(&l, (EV_KEY, 0x120, 1)), None);
+        assert_eq!(b.feed(&l, (EV_KEY, 0x120, 2)), None);
+        assert_eq!(
+            b.feed(&l, (EV_SYN, SYN_REPORT, 0)),
+            Some(vec![Raw::Pressed("button1".into())])
+        );
+        assert_eq!(b.feed(&l, (EV_SYN, SYN_REPORT, 0)), None, "empty batch");
+    }
+
+    #[test]
+    fn a_dropped_block_is_discarded_through_its_report() {
+        let l = stick_layout();
+        let mut b = Batcher::default();
+        assert_eq!(b.feed(&l, (EV_KEY, 0x120, 1)), None);
+        assert_eq!(b.feed(&l, (EV_SYN, SYN_DROPPED, 0)), None);
+        assert_eq!(b.feed(&l, (EV_KEY, 0x121, 1)), None, "compensation events");
+        assert_eq!(b.feed(&l, (EV_SYN, SYN_REPORT, 0)), None);
+        assert_eq!(b.feed(&l, (EV_KEY, 0x121, 1)), None);
+        assert_eq!(
+            b.feed(&l, (EV_SYN, SYN_REPORT, 0)),
+            Some(vec![Raw::Pressed("button2".into())])
+        );
     }
 }

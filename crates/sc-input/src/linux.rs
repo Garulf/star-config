@@ -3,25 +3,26 @@ use std::io::ErrorKind;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use evdev::{Device, EventType, SynchronizationCode};
+use std::os::fd::AsFd;
 
-use crate::evdev_map;
+use evdev::Device;
+use evdev::raw_stream::RawDevice;
+
+use crate::evdev_map::{self, Batcher, Layout};
 use crate::{Backend, DeviceClass, DeviceInfo, DeviceKey, Raw};
 
 const INPUT_DIR: &str = "/dev/input";
 const UDEV_DATA_DIR: &str = "/run/udev/data";
 const JOYSTICK_TAG: &str = "E:ID_INPUT_JOYSTICK=1";
-const EV_KEY: u16 = EventType::KEY.0;
-const EV_ABS: u16 = EventType::ABSOLUTE.0;
-const EV_SYN: u16 = EventType::SYNCHRONIZATION.0;
-const SYN_REPORT: u16 = SynchronizationCode::SYN_REPORT.0;
+const PROP_ACCELEROMETER: u16 = 0x06;
 
 struct Opened {
-    device: Device,
+    device: RawDevice,
     class: DeviceClass,
     keys: Vec<u16>,
     ranges: Vec<(u16, i32, i32)>,
-    pending: Vec<Raw>,
+    batcher: Batcher,
+    initial: Option<Vec<Raw>>,
 }
 
 pub struct EvdevBackend {
@@ -37,7 +38,7 @@ pub fn open(class: DeviceClass) -> EvdevBackend {
         unreadable: 0,
     };
     for path in event_nodes() {
-        match Device::open(&path) {
+        match open_nonblocking(&path) {
             Ok(device) => backend.adopt(device, class),
             Err(e) if e.kind() == ErrorKind::PermissionDenied && tagged_joystick(&path) => {
                 backend.unreadable += 1;
@@ -81,8 +82,15 @@ fn has_joystick_tag(udev_data: &str) -> bool {
     udev_data.lines().any(|line| line == JOYSTICK_TAG)
 }
 
+fn open_nonblocking(path: &Path) -> std::io::Result<RawDevice> {
+    let probe = Device::open(path)?;
+    probe.set_nonblocking(true)?;
+    let shared_description = probe.as_fd().try_clone_to_owned()?;
+    RawDevice::from_fd(shared_description)
+}
+
 impl EvdevBackend {
-    fn adopt(&mut self, device: Device, wanted: DeviceClass) {
+    fn adopt(&mut self, device: RawDevice, wanted: DeviceClass) {
         let keys: Vec<u16> = device
             .supported_keys()
             .map(|set| set.iter().map(|k| k.0).collect())
@@ -91,22 +99,35 @@ impl EvdevBackend {
             .supported_absolute_axes()
             .map(|set| set.iter().map(|a| a.0).collect())
             .unwrap_or_default();
-        if evdev_map::classify(&keys, &axes) != Some(wanted) {
+        let accelerometer = device
+            .properties()
+            .iter()
+            .any(|p| p.0 == PROP_ACCELEROMETER);
+        if evdev_map::classify(&keys, &axes, accelerometer) != Some(wanted) {
             return;
         }
         let Ok(state) = device.get_abs_state() else {
             return;
         };
-        let ranges = axes
+        let ranges: Vec<(u16, i32, i32)> = axes
             .iter()
             .filter_map(|&code| {
                 let info = state.get(usize::from(code))?;
                 Some((code, info.minimum, info.maximum))
             })
             .collect();
-        if device.set_nonblocking(true).is_err() {
-            return;
-        }
+        let layout = Layout {
+            class: wanted,
+            keys: &keys,
+            ranges: &ranges,
+        };
+        let initial: Vec<Raw> = axes
+            .iter()
+            .filter_map(|&code| {
+                let info = state.get(usize::from(code))?;
+                layout.axis_reading(code, info.value)
+            })
+            .collect();
         let id = device.input_id();
         self.infos.push(DeviceInfo {
             vendor: id.vendor(),
@@ -118,59 +139,32 @@ impl EvdevBackend {
             class: wanted,
             keys,
             ranges,
-            pending: Vec::new(),
+            batcher: Batcher::default(),
+            initial: (!initial.is_empty()).then_some(initial),
         });
     }
 }
 
 impl Opened {
-    fn translate(&self, kind: u16, code: u16, value: i32) -> Option<Raw> {
-        match kind {
-            EV_KEY if value == 1 => {
-                let name = match self.class {
-                    DeviceClass::Stick => evdev_map::stick_button(&self.keys, code)?,
-                    DeviceClass::Gamepad => evdev_map::pad_button(code)?.to_string(),
-                };
-                Some(Raw::Pressed(name))
-            }
-            EV_ABS => {
-                if let Some(name) = evdev_map::hat(code, value, self.class) {
-                    return Some(Raw::Pressed(name));
-                }
-                let name = match self.class {
-                    DeviceClass::Stick => evdev_map::stick_axis(code)?,
-                    DeviceClass::Gamepad => evdev_map::pad_axis(code)?,
-                };
-                let &(_, min, max) = self.ranges.iter().find(|r| r.0 == code)?;
-                Some(Raw::Axis {
-                    name,
-                    value,
-                    min,
-                    max,
-                })
-            }
-            _ => None,
-        }
-    }
-
     fn drain(&mut self) -> Result<Vec<Vec<Raw>>, ()> {
         let events: Vec<(u16, u16, i32)> = match self.device.fetch_events() {
             Ok(events) => events
                 .map(|e| (e.event_type().0, e.code(), e.value()))
                 .collect(),
-            Err(e) if e.kind() == ErrorKind::WouldBlock => return Ok(Vec::new()),
+            Err(e) if e.kind() == ErrorKind::WouldBlock => Vec::new(),
             Err(_) => return Err(()),
         };
-        let mut batches = Vec::new();
-        for (kind, code, value) in events {
-            if kind == EV_SYN && code == SYN_REPORT {
-                if !self.pending.is_empty() {
-                    batches.push(std::mem::take(&mut self.pending));
-                }
-            } else if let Some(raw) = self.translate(kind, code, value) {
-                self.pending.push(raw);
-            }
-        }
+        let layout = Layout {
+            class: self.class,
+            keys: &self.keys,
+            ranges: &self.ranges,
+        };
+        let mut batches: Vec<Vec<Raw>> = self.initial.take().into_iter().collect();
+        batches.extend(
+            events
+                .into_iter()
+                .filter_map(|event| self.batcher.feed(&layout, event)),
+        );
         Ok(batches)
     }
 }
@@ -208,6 +202,7 @@ mod tests {
     fn minor_of_event_node() {
         assert_eq!(minor(0xd_43), 0x43);
         assert_eq!(minor((13 << 8) | 67), 67);
+        assert_eq!(minor(0x100d00), 256);
     }
 
     #[test]
