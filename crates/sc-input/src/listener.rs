@@ -24,7 +24,7 @@ impl Listener {
                     max,
                 } => {
                     let rest = *self.rest.entry((device, name)).or_insert(*value);
-                    let past_threshold = (i64::from(*value) - i64::from(rest)).abs() * 2
+                    let past_threshold = (i64::from(*value) - i64::from(rest)).abs() * 4
                         > i64::from(*max) - i64::from(*min);
                     if past_threshold && moved.is_none() {
                         moved = Some((*name).to_string());
@@ -74,6 +74,7 @@ mod tests {
         let mut l = Listener::new();
         assert_eq!(l.feed(0, &[axis("slider1", 255, 0, 255)]), None);
         assert_eq!(l.feed(0, &[axis("slider1", 200, 0, 255)]), None);
+        assert_eq!(l.feed(0, &[axis("slider1", 192, 0, 255)]), None);
         assert_eq!(
             l.feed(0, &[axis("slider1", 100, 0, 255)]),
             Some("slider1".into())
@@ -81,15 +82,30 @@ mod tests {
     }
 
     #[test]
-    fn jitter_below_half_range_never_binds() {
+    fn jitter_below_quarter_range_never_binds() {
         let mut l = Listener::new();
         assert_eq!(l.feed(0, &[axis("x", 500, 0, 1000)]), None);
-        for v in [503, 496, 900, 1000] {
+        for v in [503, 496, 600, 400, 700, 749, 750] {
             assert_eq!(l.feed(0, &[axis("x", v, 0, 1000)]), None, "value {v}");
         }
-        let mut l = Listener::new();
-        assert_eq!(l.feed(0, &[axis("x", 400, 0, 1000)]), None);
-        assert_eq!(l.feed(0, &[axis("x", 1000, 0, 1000)]), Some("x".into()));
+        assert_eq!(l.feed(0, &[axis("x", 751, 0, 1000)]), Some("x".into()));
+    }
+
+    #[test]
+    fn centred_axis_binds_in_both_directions() {
+        for target in [0, 65535] {
+            let mut l = Listener::new();
+            assert_eq!(l.feed(0, &[axis("x", 32767, 0, 65535)]), None);
+            assert_eq!(l.feed(0, &[axis("x", target, 0, 65535)]), Some("x".into()));
+        }
+        for target in [-32768, 32767] {
+            let mut l = Listener::new();
+            assert_eq!(l.feed(0, &[axis("y", 0, -32768, 32767)]), None);
+            assert_eq!(
+                l.feed(0, &[axis("y", target, -32768, 32767)]),
+                Some("y".into())
+            );
+        }
     }
 
     #[test]
@@ -105,7 +121,7 @@ mod tests {
         let mut l = Listener::new();
         let (min, max) = (i32::MIN, i32::MAX);
         assert_eq!(l.feed(0, &[axis("x", min, min, max)]), None);
-        assert_eq!(l.feed(0, &[axis("x", -1, min, max)]), None);
+        assert_eq!(l.feed(0, &[axis("x", min + 1000, min, max)]), None);
         assert_eq!(l.feed(0, &[axis("x", max, min, max)]), Some("x".into()));
     }
 }

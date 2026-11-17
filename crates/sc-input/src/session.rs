@@ -127,4 +127,36 @@ mod tests {
         );
         assert_eq!(s.poll(), None);
     }
+
+    #[test]
+    fn a_centred_axis_is_heard_in_each_direction() {
+        let axis = |value| {
+            Ok(vec![Raw::Axis {
+                name: "x",
+                value,
+                min: 0,
+                max: 65535,
+            }])
+        };
+        for far in [0, 65535] {
+            let device = info("Stick");
+            let mut s = Session::new(FakeBackend {
+                devices: vec![device.clone()],
+                script: VecDeque::from([
+                    vec![(0, axis(32767))],
+                    vec![(0, axis(32800))],
+                    vec![(0, axis(far))],
+                ]),
+            });
+            assert_eq!(s.poll(), None);
+            assert_eq!(s.poll(), None);
+            assert_eq!(
+                s.poll(),
+                Some(Heard {
+                    device,
+                    input: "x".into()
+                })
+            );
+        }
+    }
 }
