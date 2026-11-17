@@ -30,7 +30,7 @@ fn open(path: &str) -> Result<Archive, String> {
 fn counts(path: &str) -> Result<(), String> {
     let archive = open(path)?;
     let data = defaults::from_archive(&archive, "p4k_dump", "english")
-        .map_err(|reason| reason.message())?;
+        .map_err(|reason| reason.reason())?;
     let counts = data.counts();
     println!("maps:          {}", counts.maps);
     println!("actions:       {}", counts.actions);

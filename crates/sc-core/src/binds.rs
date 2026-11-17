@@ -82,7 +82,7 @@ pub fn rows(game: Option<&GameData>, doc: &ActionMaps) -> Vec<Row> {
 }
 
 /// Binds that share an input while maps are active together, where at least one is the user's.
-pub fn conflicts(rows: &[Row]) -> Vec<Conflict> {
+pub fn conflicts<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Vec<Conflict> {
     let mut groups: BTreeMap<String, Vec<Holder>> = BTreeMap::new();
     for row in rows {
         for cell in &row.cells {

@@ -47,38 +47,72 @@ pub enum Typed {
     Valid(String),
 }
 
-pub fn judge(slot: Slot, typed: &str) -> Typed {
+/// What a typed input is checked against besides our own tables.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Known<'a> {
+    /// Every key name the game's data lists is accepted.
+    pub game: Option<&'a GameData>,
+    /// The cell's game default, after its device prefix, which is always accepted.
+    pub default: Option<&'a str>,
+}
+
+pub fn judge(slot: Slot, typed: &str, known: Known<'_>) -> Typed {
     let rest = typed.trim();
     if rest.is_empty() {
         return Typed::Empty;
     }
     let input = format_input(slot, rest);
     let round_trips = parse_input(&input) == Some((slot, rest));
-    if round_trips && is_known(slot.kind, rest) {
+    let is_default = known
+        .default
+        .is_some_and(|default| default.trim().eq_ignore_ascii_case(rest));
+    if round_trips && (is_default || is_known(slot.kind, rest, known.game)) {
         Typed::Valid(input)
     } else {
         Typed::Invalid(format!("\"{rest}\" is not an input the game knows"))
     }
 }
 
-fn is_known(kind: DeviceKind, rest: &str) -> bool {
+fn is_known(kind: DeviceKind, rest: &str, game: Option<&GameData>) -> bool {
     let lower = rest.to_ascii_lowercase();
     let parts: Vec<&str> = lower.split('+').collect();
     let Some((last, modifiers)) = parts.split_last() else {
         return false;
     };
-    let modifiers_ok = modifiers.iter().all(|part| capture::is_modifier(part));
+    let named = |part: &str| game.is_some_and(|game| game_names(game, kind, part));
+    let modifiers_ok = modifiers.iter().all(|part| {
+        capture::is_modifier(part)
+            || named(part)
+            || (kind == DeviceKind::Gamepad && is_gamepad(part))
+    });
     match kind {
         DeviceKind::Keyboard => {
             parts
                 .iter()
-                .all(|part| capture::is_key(part) || capture::is_modifier(part))
+                .all(|part| capture::is_key(part) || capture::is_modifier(part) || named(part))
                 || (modifiers_ok && capture::is_mouse(last))
         }
-        DeviceKind::Mouse => modifiers_ok && capture::is_mouse(last),
-        DeviceKind::Joystick => modifiers_ok && is_joystick(last),
-        DeviceKind::Gamepad => modifiers_ok && GAMEPAD.iter().any(|(name, _)| name == last),
+        DeviceKind::Mouse => modifiers_ok && (capture::is_mouse(last) || named(last)),
+        DeviceKind::Joystick => modifiers_ok && (is_joystick(last) || named(last)),
+        DeviceKind::Gamepad => modifiers_ok && (is_gamepad(last) || named(last)),
     }
+}
+
+/// The keyboard column takes mouse buttons and the mouse column keyboard modifiers, so
+/// either one's names count for both.
+fn game_names(game: &GameData, kind: DeviceKind, part: &str) -> bool {
+    let kinds: &[DeviceKind] = match kind {
+        DeviceKind::Keyboard | DeviceKind::Mouse => &[DeviceKind::Keyboard, DeviceKind::Mouse],
+        DeviceKind::Gamepad => &[DeviceKind::Gamepad],
+        DeviceKind::Joystick => &[DeviceKind::Joystick],
+    };
+    kinds
+        .iter()
+        .any(|kind| game.input_names.contains_key(&(*kind, part.to_string())))
+}
+
+fn is_gamepad(name: &str) -> bool {
+    GAMEPAD.iter().any(|(known, _)| *known == name)
 }
 
 fn numbered(name: &str, prefix: &str) -> Option<u32> {
@@ -245,6 +279,123 @@ mod tests {
         kind: DeviceKind::Mouse,
         instance: 1,
     };
+    const GP: Slot = Slot {
+        kind: DeviceKind::Gamepad,
+        instance: 1,
+    };
+    const NONE: Known<'static> = Known {
+        game: None,
+        default: None,
+    };
+
+    fn judge(slot: Slot, typed: &str) -> Typed {
+        super::judge(slot, typed, NONE)
+    }
+
+    const KEY_NAMES: &str = r#"<LocalizedKeys>
+ <device name="keyboard">
+  <Key name="escape" localizationString="@k_esc"/>
+  <Key name="pause" localizationString="@k_pause"/>
+ </device>
+ <device name="mouse">
+  <Key name="mouse1_2" localizationString="@m_both"/>
+  <Key name="maxis_z" localizationString="@m_wheel_axis"/>
+ </device>
+ <device name="control_pad">
+  <Key name="thumbl_up" localizationString="@p_lup"/>
+  <Key name="thumbr_left" localizationString="@p_rleft"/>
+  <Key name="triggerl_r_btn" localizationString="@p_both_triggers"/>
+ </device>
+ <device name="joystick1">
+  <Key name="rotz_neg" localizationString="@j_twist_left"/>
+ </device>
+</LocalizedKeys>"#;
+
+    fn game() -> GameData {
+        GameData::from_sources(
+            "test".into(),
+            &sc_core::defaults::Sources {
+                profile: "<profile/>".into(),
+                attributes: "<Attributes/>".into(),
+                key_names: KEY_NAMES.into(),
+                strings: String::new(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn with_game_data_every_key_name_it_lists_is_accepted() {
+        let game = game();
+        let known = Known {
+            game: Some(&game),
+            default: None,
+        };
+        for (slot, typed) in [
+            (KB, "escape"),
+            (KB, "pause"),
+            (KB, "lctrl+escape"),
+            (KB, "mouse1_2"),
+            (MOUSE, "mouse1_2"),
+            (MOUSE, "maxis_z"),
+            (GP, "thumbl_up"),
+            (GP, "shoulderl+thumbr_left"),
+            (GP, "triggerl_r_btn"),
+            (JS2, "rotz_neg"),
+        ] {
+            assert!(
+                matches!(super::judge(slot, typed, known), Typed::Valid(_)),
+                "{typed}"
+            );
+            assert!(matches!(judge(slot, typed), Typed::Invalid(_)), "{typed}");
+        }
+        assert!(matches!(
+            super::judge(GP, "escape", known),
+            Typed::Invalid(_)
+        ));
+        assert!(matches!(
+            super::judge(JS2, "thumbl_up", known),
+            Typed::Invalid(_)
+        ));
+    }
+
+    #[test]
+    fn gamepad_buttons_combine_with_each_other() {
+        assert_eq!(
+            judge(GP, "shoulderl+y"),
+            Typed::Valid("gp1_shoulderl+y".into())
+        );
+        assert_eq!(
+            judge(GP, "shoulderl+shoulderr"),
+            Typed::Valid("gp1_shoulderl+shoulderr".into())
+        );
+        assert!(matches!(judge(GP, "shoulderl+nope"), Typed::Invalid(_)));
+        assert!(matches!(judge(KB, "shoulderl+f"), Typed::Invalid(_)));
+    }
+
+    #[test]
+    fn the_cells_own_default_is_always_accepted() {
+        for (slot, odd) in [(KB, "]"), (KB, "HMD_Pitch"), (MOUSE, "maxis_z")] {
+            let known = Known {
+                game: None,
+                default: Some(odd),
+            };
+            assert!(matches!(judge(slot, odd), Typed::Invalid(_)), "{odd}");
+            assert_eq!(
+                super::judge(slot, odd, known),
+                Typed::Valid(format_input(slot, odd)),
+                "{odd}"
+            );
+        }
+        let known = Known {
+            game: None,
+            default: Some("HMD_Pitch"),
+        };
+        assert!(matches!(
+            super::judge(KB, "HMD_Yaw", known),
+            Typed::Invalid(_)
+        ));
+    }
 
     #[test]
     fn judge_accepts_known_inputs_and_names_bad_ones() {

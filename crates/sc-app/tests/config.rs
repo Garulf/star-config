@@ -9,6 +9,7 @@ use sc_app::app::{self, App, Message};
 use sc_app::screen::Screen;
 use sc_app::screens::config::{self, Tab};
 use sc_core::backup::BackupStore;
+use sc_core::defaults::Unavailable;
 use sc_core::install::Channel;
 use sc_core::settings::ThemeChoice;
 use std::fs;
@@ -830,6 +831,43 @@ fn without_game_data_the_flat_list_remains() {
     );
     assert!(has_part(&fx.app, "could not be read"));
     assert!(has(&fx.app, "Setting003"), "the flat list stays");
+}
+
+#[test]
+fn the_note_says_why_once() {
+    let mut fx = fixture(None, Some(numbered_attributes(5).as_bytes()));
+    send(&mut fx, [config::Message::Tab(Tab::Game)]);
+    let note = format!(
+        "Game data unavailable: showing only the settings stored in your file. {}",
+        Unavailable::NoArchive.reason()
+    );
+    assert!(has(&fx.app, &note), "{note}");
+    assert!(!has_part(&fx.app, "only the binds"));
+}
+
+#[test]
+fn try_again_reads_game_data_that_has_appeared_since() {
+    let mut fx = fixture(None, Some(numbered_attributes(5).as_bytes()));
+    send(&mut fx, [config::Message::Tab(Tab::Game)]);
+    assert!(has_part(&fx.app, "Game data unavailable"));
+
+    testkit::write_build(&fx.channel, "4.1.0", "1234");
+    testkit::seed_game_data_with(fx.app.context(), GAME_ATTRIBUTES, GAME_STRINGS);
+    send(&mut fx, [config::Message::Tab(Tab::Game)]);
+    assert!(
+        has_part(&fx.app, "Game data unavailable"),
+        "the failed read is kept until asked to try again"
+    );
+
+    let mut ui = sim(&fx.app);
+    ui.click(config::TRY_AGAIN).unwrap();
+    let messages: Vec<Message> = ui.into_messages().collect();
+    feed(&mut fx.app, messages);
+    assert!(!has_part(&fx.app, "Game data unavailable"));
+    assert!(
+        !has_part(&fx.app, "Reading the game's"),
+        "neither the note nor the loading line: the game's list is shown"
+    );
 }
 
 #[test]

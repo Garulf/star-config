@@ -5,6 +5,7 @@ mod text_check;
 use super::attr_edit::{self, AttrFile, Doc};
 use super::edits::{self, Carry, Edits, Pending, Target, Written, changed_keys};
 use super::typed::{self, Kind};
+pub use super::words::TRY_AGAIN;
 use super::words::{GAME_DATA_LOADING, GAME_RUNNING, words};
 use crate::context::Context;
 use crate::game_data::Loaded as GameLoaded;
@@ -156,6 +157,7 @@ pub enum Message {
     SetAttr(String, String),
     ResetAttr(String),
     GameLoaded(u64, GameLoaded),
+    RetryGameData,
     Scrolled(f32),
     Applied(Carry<Applied>),
 }
@@ -316,7 +318,7 @@ impl State {
         self.cfg.edits().is_some_and(Edits::is_away)
     }
 
-    pub fn update(&mut self, message: Message, _ctx: &Context) -> Action<Message> {
+    pub fn update(&mut self, message: Message, ctx: &Context) -> Action<Message> {
         match message {
             Message::Loaded(seq, loaded) => {
                 if seq == self.seq
@@ -339,6 +341,7 @@ impl State {
                 }
                 Action::none()
             }
+            Message::RetryGameData => Action::task(self.retry_game(ctx)),
             Message::Tab(tab) => {
                 self.tab = tab;
                 Action::none()
@@ -471,12 +474,28 @@ impl State {
         };
         self.lines = lines;
         self.game_note = match self.game.as_deref() {
-            Some(Err(unavailable)) => Some(format!(
-                "{GAME_NOTE} {}",
-                attr_edit::unavailable_reason(unavailable)
-            )),
+            Some(Err(unavailable)) => Some(format!("{GAME_NOTE} {}", unavailable.reason())),
             _ => None,
         };
+    }
+
+    /// Forgets a failed read, so a `Data.p4k` that was locked or still downloading is read again.
+    fn retry_game(&mut self, ctx: &Context) -> Task<Message> {
+        let Some(channel) = ctx.channel.as_ref() else {
+            return Task::none();
+        };
+        if !matches!(self.game.as_deref(), Some(Err(_))) {
+            return Task::none();
+        }
+        ctx.game_data().forget(channel);
+        self.game = None;
+        self.refresh_lines();
+        let (cached, read) = attr_edit::game_data(ctx);
+        let seq = self.seq;
+        match cached {
+            Some(loaded) => Task::done(Message::GameLoaded(seq, loaded)),
+            None => read.map(move |loaded| Message::GameLoaded(seq, loaded)),
+        }
     }
 
     fn cfg_changed(&mut self) {
@@ -906,7 +925,11 @@ impl State {
         let count = attr_edit::count_line(shown.len(), current.len());
         let mut body = Column::new().spacing(space::MD).height(Length::Fill);
         if let Some(note) = note {
-            body = body.push(banner(ToastKind::Info, note, None));
+            body = body.push(banner(
+                ToastKind::Info,
+                note,
+                Some((TRY_AGAIN, Message::RetryGameData)),
+            ));
         }
         if !doc.editable && !self.attrs.is_away() {
             body = body.push(banner(ToastKind::Warning, attr_edit::NOT_RECOGNISED, None));

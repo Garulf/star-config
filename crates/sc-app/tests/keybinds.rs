@@ -13,7 +13,7 @@ use sc_app::screens::keybinds::{
     self, ADVANCED_TAB, AdvancedMessage, BINDS_TAB, CAPTURE_PROMPT, CellRef, DevicePick,
     EMPTY_BODY, EMPTY_TITLE, GAME_DATA_LOADING, GAME_DEFAULT, NO_GAME_DATA_NOTE, NOT_A_NUMBER,
     NOT_CONNECTED, NOT_IN_BUILD, OptionField, POINT_RANGE, PointPart, RESET_CAPTION, SHOW_UNLISTED,
-    SlotChoice, Source, SourceChoice, UNBIND_CAPTION, UNKNOWN_KEY, UNRECOGNISED,
+    SlotChoice, Source, SourceChoice, TRY_AGAIN, UNBIND_CAPTION, UNKNOWN_KEY, UNRECOGNISED,
 };
 use sc_app::theme;
 use sc_core::actionmaps::{ActionMaps, AxisField, DeviceKind, GroupField, Op, Slot};
@@ -1140,12 +1140,81 @@ fn file_only_action_shows_as_not_in_this_game_version() {
 fn without_game_data_the_screen_works_as_before_with_a_note() {
     let temp = tempfile::tempdir().unwrap();
     let (app, _) = demo(temp.path());
-    assert!(has_containing(&app, NO_GAME_DATA_NOTE));
-    assert!(has_containing(&app, &Unavailable::NoArchive.message()));
+    let note = format!("{NO_GAME_DATA_NOTE} {}", Unavailable::NoArchive.reason());
+    assert!(has(&app, &note), "{note}");
+    assert_eq!(
+        texts(&app)
+            .iter()
+            .filter(|text| text.contains("only the binds"))
+            .count(),
+        1
+    );
+    assert!(!has_containing(&app, "only your own binds"));
     assert!(has(&app, "Add a bind by name"));
     assert!(!has(&app, SHOW_UNLISTED));
     assert!(has(&app, "Strafe forward"));
     assert!(has(&app, "W"));
+}
+
+#[test]
+fn try_again_reads_game_data_that_has_appeared_since() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, _) = demo(temp.path());
+    assert!(has_containing(&app, NO_GAME_DATA_NOTE));
+    assert!(!has(&app, SHOW_UNLISTED));
+
+    let ctx = app.context().clone();
+    let live = ctx.channel.clone().unwrap();
+    testkit::write_build(&live, testkit::LIVE_VERSION, testkit::LIVE_CHANGE);
+    testkit::seed_keybinds_game_data(&ctx);
+    clicked(&mut app, TRY_AGAIN);
+    assert!(!has_containing(&app, NO_GAME_DATA_NOTE));
+    assert!(!has(&app, TRY_AGAIN));
+    assert!(has(&app, SHOW_UNLISTED));
+    assert!(has(&app, "Seats and exits"));
+}
+
+#[test]
+fn unbind_writes_the_stick_the_picker_shows() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut app, path) = demo_with_game(temp.path());
+    send(
+        &mut app,
+        keybinds::Message::PickMap(Some("spaceship_weapons".into())),
+    );
+    select(
+        &mut app,
+        "spaceship_weapons",
+        "v_attack1_group1",
+        DeviceKind::Joystick,
+    );
+    let js4 = Slot {
+        kind: DeviceKind::Joystick,
+        instance: 4,
+    };
+    send(
+        &mut app,
+        keybinds::Message::PickStick(SlotChoice {
+            slot: js4,
+            label: "Joystick 4".into(),
+        }),
+    );
+    clicked(&mut app, "Unbind");
+    assert_eq!(pending(&app), 1);
+    feed(&mut app, [Message::Apply]);
+    let written = read(&path);
+    assert_eq!(
+        written,
+        after(
+            DEMO,
+            Op::Unbind {
+                map: "spaceship_weapons".into(),
+                action: "v_attack1_group1".into(),
+                slot: js4,
+            },
+        )
+    );
+    assert!(written.contains("<rebind input=\"js4_ \"/>"), "{written}");
 }
 
 #[test]

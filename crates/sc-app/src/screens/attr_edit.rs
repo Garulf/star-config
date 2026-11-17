@@ -148,19 +148,6 @@ pub fn game_of(loaded: Option<&GameLoaded>) -> Option<&GameData> {
     result.as_ref().ok()
 }
 
-/// Why the game's own settings are not shown, without the Keybinds screen's wording.
-pub fn unavailable_reason(unavailable: &Unavailable) -> String {
-    match unavailable {
-        Unavailable::NoArchive => "This channel has no Data.p4k.".to_string(),
-        Unavailable::NoBuildId => "This channel has no build manifest.".to_string(),
-        Unavailable::Unreadable(reason) => {
-            format!("The game's Data.p4k could not be read ({reason}).")
-        }
-        Unavailable::Missing(entry) => format!("The game's Data.p4k has no {entry}."),
-        Unavailable::Encrypted(entry) => format!("{entry} in the game's Data.p4k is encrypted."),
-    }
-}
-
 /// Whether a typed value is the default's own value, so the game would not store it.
 pub fn same_as_default(value: &str, default: &str) -> bool {
     let (value, default) = (value.trim(), default.trim());

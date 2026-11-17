@@ -48,6 +48,12 @@ impl Cell {
         Some(parse_input(input).map_or(input, |(_, rest)| rest))
     }
 
+    /// The game's default after its device prefix, such as `escape`.
+    pub fn default_rest(&self) -> Option<&str> {
+        let default = self.default.as_deref()?;
+        Some(parse_input(default).map_or(default, |(_, rest)| rest))
+    }
+
     /// The file holds something of this kind for the action, which Reset removes.
     pub fn resettable(&self) -> bool {
         matches!(self.origin, Origin::Override | Origin::Unbound) || self.extra > 0
@@ -118,12 +124,40 @@ pub struct Model {
 }
 
 type Key = (String, String);
-type Before = HashMap<Key, Vec<(Option<String>, Origin)>>;
+
+/// What each cell showed in the file as loaded, before any staged edit. It depends only on
+/// that file and the game's defaults, so the screen keeps it across edits.
+pub struct Baseline {
+    cells: HashMap<Key, Vec<(Option<String>, Origin)>>,
+}
+
+impl Baseline {
+    pub fn of(game: Option<&GameData>, base: &ActionMaps) -> Self {
+        let cells = binds::rows(game, base)
+            .into_iter()
+            .map(|row| {
+                let cells = row
+                    .cells
+                    .into_iter()
+                    .map(|cell| (cell.input, cell.origin))
+                    .collect();
+                ((row.map, row.action), cells)
+            })
+            .collect();
+        Self { cells }
+    }
+}
 
 impl Model {
-    pub fn build(game: Option<&GameData>, current: &ActionMaps, base: &ActionMaps) -> Self {
+    /// Conflicts count only rows the table can show: listed ones, or all with `show_unlisted`.
+    pub fn build(
+        game: Option<&GameData>,
+        current: &ActionMaps,
+        baseline: &Baseline,
+        show_unlisted: bool,
+    ) -> Self {
         let merged = binds::rows(game, current);
-        let conflicts = binds::conflicts(&merged);
+        let conflicts = binds::conflicts(merged.iter().filter(|row| row.listed || show_unlisted));
         let conflicted: HashSet<(String, String, String)> = conflicts
             .iter()
             .flat_map(|conflict| {
@@ -134,7 +168,6 @@ impl Model {
                     .map(move |(map, action)| (map.clone(), action.clone(), input.clone()))
             })
             .collect();
-        let before = before(game, base);
         let defs = definitions(game);
         let maps = map_entries(game, &merged);
         let rank: HashMap<&str, usize> = maps
@@ -147,7 +180,7 @@ impl Model {
             .map(|row| {
                 let key = (row.map.clone(), row.action.clone());
                 let def = defs.get(&key).copied();
-                let was = before.get(&key);
+                let was = baseline.cells.get(&key);
                 build_row(game, row, def, was, &conflicted)
             })
             .collect();
@@ -254,20 +287,6 @@ fn definitions(game: Option<&GameData>) -> HashMap<Key, &ActionDef> {
             map.actions
                 .iter()
                 .map(move |def| ((map.name.clone(), def.name.clone()), def))
-        })
-        .collect()
-}
-
-fn before(game: Option<&GameData>, base: &ActionMaps) -> Before {
-    binds::rows(game, base)
-        .into_iter()
-        .map(|row| {
-            let cells = row
-                .cells
-                .into_iter()
-                .map(|cell| (cell.input, cell.origin))
-                .collect();
-            ((row.map, row.action), cells)
         })
         .collect()
 }
@@ -531,6 +550,39 @@ mod tests {
         .unwrap()
     }
 
+    fn build(game: Option<&GameData>, current: &ActionMaps, base: &ActionMaps) -> Model {
+        Model::build(game, current, &Baseline::of(game, base), false)
+    }
+
+    #[test]
+    fn conflicts_count_only_rows_the_table_shows() {
+        let file = FILE.replace(
+            "<rebind input=\"mo1_mouse1\"/>",
+            "<rebind input=\"mo1_mouse1\"/>\n    <rebind input=\"kb1_f12\"/>",
+        );
+        let game = game();
+        let (current, base) = (doc(&file), doc(&file));
+        let baseline = Baseline::of(Some(&game), &base);
+        let listed = Model::build(Some(&game), &current, &baseline, false);
+        let fire = |model: &Model| {
+            cell(
+                model,
+                "spaceship_weapons",
+                "v_attack1_group1",
+                DeviceKind::Keyboard,
+            )
+            .conflict
+        };
+        assert_eq!(
+            listed.conflicts, 1,
+            "js2_button5 only: kb1_f12 clashes with v_hidden, which the table hides"
+        );
+        assert!(!fire(&listed));
+        let all = Model::build(Some(&game), &current, &baseline, true);
+        assert_eq!(all.conflicts, 2);
+        assert!(fire(&all));
+    }
+
     fn cell<'a>(model: &'a Model, map: &str, action: &str, kind: DeviceKind) -> &'a Cell {
         model
             .cell(&CellRef {
@@ -543,7 +595,7 @@ mod tests {
 
     #[test]
     fn without_game_data_rows_conflicts_and_devices_come_from_the_file() {
-        let model = Model::build(None, &doc(FILE), &doc(FILE));
+        let model = build(None, &doc(FILE), &doc(FILE));
         assert_eq!(
             model.devices,
             "Keyboard, Joystick 1: VKB Gladiator NXT L, Joystick 2: VKB Gladiator NXT R"
@@ -575,7 +627,7 @@ mod tests {
     #[test]
     fn with_game_data_maps_follow_their_category_and_the_changed_marker_follows_the_default() {
         let game = game();
-        let model = Model::build(Some(&game), &doc(FILE), &doc(FILE));
+        let model = build(Some(&game), &doc(FILE), &doc(FILE));
         let maps: Vec<(&str, Option<&str>)> = model
             .maps
             .iter()
@@ -622,7 +674,7 @@ mod tests {
     #[test]
     fn rows_are_grouped_like_the_map_list_and_lines_filter() {
         let game = game();
-        let model = Model::build(Some(&game), &doc(FILE), &doc(FILE));
+        let model = build(Some(&game), &doc(FILE), &doc(FILE));
         let names: Vec<&str> = model.rows.iter().map(|row| row.action.as_str()).collect();
         assert_eq!(
             names,
@@ -669,7 +721,7 @@ mod tests {
             })
             .unwrap();
         let game = game();
-        let model = Model::build(Some(&game), &current, &base);
+        let model = build(Some(&game), &current, &base);
         let boost = cell(
             &model,
             "spaceship_movement",

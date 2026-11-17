@@ -1,12 +1,12 @@
 use super::inputs::{
-    AXES, Typed, captures, judge, kind_label, quick_buttons, quick_hats, quick_label, slot_label,
-    stick_label,
+    AXES, Known, Typed, captures, judge, kind_label, quick_buttons, quick_hats, quick_label,
+    slot_label, stick_label,
 };
 use super::model::{Cell, CellRef, Line, MapEntry, Model, Row as BindRow};
 use super::source::{Failure, UNRECOGNISED};
 use super::{
     ADD_CAPTION, AddForm, CAPTURE_PROMPT, Doc, EMPTY_BODY, EMPTY_TITLE, Edit, GAME_DATA_LOADING,
-    Message, NOT_IN_BUILD, RESET_CAPTION, SHOW_UNLISTED, SaveForm, State, SwapForm, Tab,
+    Message, NOT_IN_BUILD, RESET_CAPTION, SHOW_UNLISTED, SaveForm, State, SwapForm, TRY_AGAIN, Tab,
     UNBIND_CAPTION, add_input,
 };
 use crate::icons;
@@ -114,8 +114,8 @@ impl State {
         if !self.writable() && matches!(self.doc, Doc::Ready { .. }) {
             body = body.push(banner(ToastKind::Warning, UNRECOGNISED, None));
         }
-        if let Some(note) = &self.no_game_note {
-            body = body.push(banner(ToastKind::Info, note, None));
+        if let Some(note) = self.game_note() {
+            body = body.push(note);
         }
         body = body.push(
             row![
@@ -141,6 +141,19 @@ impl State {
             )],
             body,
         )
+    }
+
+    /// Why the game's defaults are missing, with a retry, or that they are still being read.
+    pub(super) fn game_note(&self) -> Option<Element<'_, Message>> {
+        if let Some(note) = &self.no_game_note {
+            return Some(banner(
+                ToastKind::Info,
+                note,
+                Some((TRY_AGAIN, Message::RetryGameData)),
+            ));
+        }
+        self.game_loading
+            .then(|| banner(ToastKind::Info, GAME_DATA_LOADING, None))
     }
 
     pub(super) fn source_pick(&self) -> Element<'_, Message> {
@@ -182,7 +195,7 @@ impl State {
                 writable.then_some(Message::OpenSwap),
             ));
         }
-        if self.game().is_none() {
+        if self.game().is_none() && !self.game_loading {
             bar = bar.push(button(
                 "Add a bind by name",
                 ButtonKind::Secondary,
@@ -376,7 +389,7 @@ impl State {
         let error = form
             .slot
             .as_ref()
-            .map(|choice| judge(choice.slot, &form.input));
+            .map(|choice| judge(choice.slot, &form.input, Known::default()));
         let first = row![
             labelled(
                 "Action map",
@@ -788,7 +801,7 @@ impl State {
     }
 
     fn input_side<'a>(&'a self, edit: &'a Edit, cell: Option<&'a Cell>) -> Element<'a, Message> {
-        let judged = judge(edit.slot, &edit.typed);
+        let judged = judge(edit.slot, &edit.typed, self.known(&edit.cell));
         let valid = matches!(judged, Typed::Valid(_));
         let field = text_field(placeholder(edit.cell.kind), &edit.typed, Message::Typed)
             .on_submit_maybe(valid.then_some(Message::Set))

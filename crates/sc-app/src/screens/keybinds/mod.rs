@@ -5,7 +5,7 @@ mod model;
 mod source;
 mod view;
 
-pub use crate::screens::words::GAME_DATA_LOADING;
+pub use crate::screens::words::{GAME_DATA_LOADING, TRY_AGAIN};
 pub use advanced::{
     ADVANCED_TAB, AdvancedMessage, BINDS_TAB, DevicePick, GAME_DEFAULT, NOT_A_NUMBER,
     NOT_CONNECTED, OptionField, POINT_RANGE, PointPart,
@@ -24,12 +24,13 @@ use crate::widgets::VirtualListState;
 use crate::work;
 use capture::{Capture, Outcome};
 use iced::{Element, Task};
-use inputs::{STICKS, Typed, captures, judge};
-use model::{Line, Model};
+use inputs::{Known, STICKS, Typed, captures, judge};
+use model::{Baseline, Line, Model};
 use sc_core::actionmaps::{ActionMaps, DeviceKind, Op, Slot, layout_file_name};
 use sc_core::backup::SnapshotId;
 use sc_core::defaults::GameData;
 use sc_core::guard::Writer;
+use sc_core::safe_write::{Hash, LoadedFile};
 use sc_core::staging::{Document, Staged};
 use source::{Handoff, Loaded, Opened, WriteFailure};
 use std::fmt;
@@ -40,7 +41,8 @@ pub const UNBIND_CAPTION: &str =
     "Leaves this action with no bind on this device, even if the game has a default.";
 pub const SHOW_UNLISTED: &str = "Show actions the game's menu hides";
 pub const NOT_IN_BUILD: &str = "Not in this game version";
-pub const NO_GAME_DATA_NOTE: &str = "Showing only the binds stored in your files.";
+pub const NO_GAME_DATA_NOTE: &str =
+    "Game data unavailable: showing only the binds stored in your files.";
 pub const ADD_CAPTION: &str = "For actions that have no bind in this file yet. Use the action's name as the game writes it, for example v_toggle_mining_mode.";
 pub const CAPTURE_PROMPT: &str = "Press a key or a mouse button";
 pub const UNKNOWN_KEY: &str = "This key has no known name. Type it below.";
@@ -112,6 +114,24 @@ struct SaveForm {
     name: String,
 }
 
+/// The table's view of the file as loaded, kept while that file and the game data stay.
+struct BaselineCache {
+    file: (PathBuf, Option<Hash>),
+    game: Option<GameLoad>,
+    baseline: Baseline,
+}
+
+impl BaselineCache {
+    fn fits(&self, loaded: &LoadedFile, game: &Option<GameLoad>) -> bool {
+        let same_game = match (&self.game, game) {
+            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        same_game && self.file.0 == loaded.path && self.file.1 == loaded.hash
+    }
+}
+
 enum Panel {
     Closed,
     Edit(Edit),
@@ -131,6 +151,7 @@ pub struct State {
     /// Why the game's defaults are missing, in words, once a load has said so.
     no_game_note: Option<String>,
     show_unlisted: bool,
+    baseline: Option<BaselineCache>,
     model: Option<Model>,
     lines: Vec<Line>,
     map: Option<String>,
@@ -146,7 +167,9 @@ pub struct State {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Loaded(PathBuf, Loaded, GameLoad),
+    Loaded(PathBuf, Loaded),
+    GameLoaded(PathBuf, GameLoad),
+    RetryGameData,
     Listed(PathBuf, Vec<SourceChoice>),
     PickSource(SourceChoice),
     SwitchSource(Source),
@@ -201,6 +224,7 @@ impl State {
             game_loading: false,
             no_game_note: None,
             show_unlisted: false,
+            baseline: None,
             model: None,
             lines: Vec::new(),
             map: None,
@@ -229,16 +253,63 @@ impl State {
         }
         let wanted = self.source.clone();
         let dir = channel.dir.clone();
+        let game = match ctx.game_data().cached(&channel) {
+            Some(game) => {
+                self.take_game(game);
+                Task::none()
+            }
+            None => self.read_game(ctx),
+        };
+        let file = work::background(
+            move || source::load(&channel, wanted),
+            move |loaded| Message::Loaded(dir, loaded),
+        );
+        Task::batch([file, game])
+    }
+
+    /// Reads the game's defaults in the background; the file is shown without them meanwhile.
+    fn read_game(&mut self, ctx: &Context) -> Task<Message> {
+        let (Some(channel), Some(dir)) = (ctx.channel.clone(), self.channel.clone()) else {
+            return Task::none();
+        };
+        self.game_loading = true;
         let store = ctx.game_data();
-        self.game_loading = store.cached(&channel).is_none();
         let cache_root = ctx.dirs.game_data();
         work::background(
-            move || {
-                let game = store.load(&channel, &cache_root);
-                (source::load(&channel, wanted), game)
-            },
-            move |(loaded, game)| Message::Loaded(dir, loaded, game),
+            move || store.load(&channel, &cache_root),
+            move |game| Message::GameLoaded(dir, game),
         )
+    }
+
+    /// Forgets a failed read, so a `Data.p4k` that was locked or still downloading is read again.
+    fn retry_game(&mut self, ctx: &Context) -> Task<Message> {
+        let Some(channel) = ctx.channel.as_ref() else {
+            return Task::none();
+        };
+        if self.channel.as_ref() != Some(&channel.dir) || self.game_loading {
+            return Task::none();
+        }
+        ctx.game_data().forget(channel);
+        self.no_game_note = None;
+        self.read_game(ctx)
+    }
+
+    fn take_game(&mut self, game: GameLoad) {
+        self.game_loading = false;
+        if self
+            .game
+            .as_ref()
+            .is_some_and(|held| std::sync::Arc::ptr_eq(held, &game))
+        {
+            return;
+        }
+        self.no_game_note = game
+            .as_ref()
+            .as_ref()
+            .err()
+            .map(|unavailable| format!("{NO_GAME_DATA_NOTE} {}", unavailable.reason()));
+        self.game = Some(game);
+        self.refresh();
     }
 
     fn game(&self) -> Option<&GameData> {
@@ -264,10 +335,17 @@ impl State {
 
     pub fn update(&mut self, message: Message, ctx: &Context) -> Action<Message> {
         match message {
-            Message::Loaded(dir, loaded, game) => {
-                self.loaded(dir, loaded, game);
+            Message::Loaded(dir, loaded) => {
+                self.loaded(dir, loaded);
                 Action::none()
             }
+            Message::GameLoaded(dir, game) => {
+                if self.channel.as_ref() == Some(&dir) {
+                    self.take_game(game);
+                }
+                Action::none()
+            }
+            Message::RetryGameData => Action::task(self.retry_game(ctx)),
             Message::Listed(dir, sources) => {
                 if self.channel.as_ref() == Some(&dir) {
                     self.sources = sources;
@@ -311,7 +389,7 @@ impl State {
                 {
                     self.map = None;
                 }
-                self.refilter();
+                self.refresh();
                 Action::none()
             }
             Message::Scrolled(offset) => {
@@ -402,19 +480,8 @@ impl State {
         }
     }
 
-    fn loaded(&mut self, dir: PathBuf, loaded: Loaded, game: GameLoad) {
-        if self.channel.as_ref() != Some(&dir) {
-            return;
-        }
-        self.no_game_note = game
-            .as_ref()
-            .as_ref()
-            .err()
-            .map(|reason| format!("{NO_GAME_DATA_NOTE} {}", reason.message()));
-        self.game = Some(game);
-        self.game_loading = false;
-        if self.pending() > 0 {
-            self.refresh();
+    fn loaded(&mut self, dir: PathBuf, loaded: Loaded) {
+        if self.channel.as_ref() != Some(&dir) || self.pending() > 0 {
             return;
         }
         self.sources = loaded.sources;
@@ -444,7 +511,26 @@ impl State {
     fn refresh(&mut self) {
         if let Doc::Ready { staged, .. } = &self.doc {
             let game = game_of(&self.game);
-            self.model = Some(Model::build(game, staged.current(), staged.base()));
+            let loaded = staged.loaded();
+            if !self
+                .baseline
+                .as_ref()
+                .is_some_and(|cache| cache.fits(loaded, &self.game))
+            {
+                self.baseline = Some(BaselineCache {
+                    file: (loaded.path.clone(), loaded.hash),
+                    game: self.game.clone(),
+                    baseline: Baseline::of(game, staged.base()),
+                });
+            }
+            if let Some(cache) = &self.baseline {
+                self.model = Some(Model::build(
+                    game,
+                    staged.current(),
+                    &cache.baseline,
+                    self.show_unlisted,
+                ));
+            }
         } else if !matches!(self.doc, Doc::Away) {
             self.model = None;
         }
@@ -587,46 +673,66 @@ impl State {
         let Panel::Edit(edit) = &mut self.panel else {
             return Action::none();
         };
-        match edit.capture.event(event, edit.hovered) {
-            Outcome::Waiting => Action::none(),
+        let rest = match edit.capture.event(event, edit.hovered) {
+            Outcome::Waiting => return Action::none(),
             Outcome::Cancelled => {
                 edit.listening = false;
                 edit.note = None;
-                Action::none()
+                return Action::none();
             }
             Outcome::Unknown => {
                 edit.note = Some(UNKNOWN_KEY);
+                return Action::none();
+            }
+            Outcome::Done(rest) => rest,
+        };
+        let (slot, cell) = (edit.slot, edit.cell.clone());
+        let judged = judge(slot, &rest, self.known(&cell));
+        let Panel::Edit(edit) = &mut self.panel else {
+            return Action::none();
+        };
+        match judged {
+            Typed::Valid(input) => {
+                edit.listening = false;
+                edit.note = None;
+                edit.typed = rest;
+                self.stage(bind_op(&cell, input))
+            }
+            Typed::Empty | Typed::Invalid(_) => {
+                edit.note = Some(if cell.kind == DeviceKind::Mouse {
+                    MOUSE_ONLY
+                } else {
+                    UNKNOWN_KEY
+                });
                 Action::none()
             }
-            Outcome::Done(rest) => match judge(edit.slot, &rest) {
-                Typed::Valid(input) => {
-                    edit.listening = false;
-                    edit.note = None;
-                    edit.typed = rest;
-                    let op = bind_op(&edit.cell, input);
-                    self.stage(op)
-                }
-                Typed::Empty | Typed::Invalid(_) => {
-                    edit.note = Some(if edit.cell.kind == DeviceKind::Mouse {
-                        MOUSE_ONLY
-                    } else {
-                        UNKNOWN_KEY
-                    });
-                    Action::none()
-                }
-            },
+        }
+    }
+
+    /// What the edited cell's input is checked against: the game's key names and the
+    /// cell's own default.
+    fn known(&self, cell: &CellRef) -> Known<'_> {
+        Known {
+            game: self.game(),
+            default: self
+                .model
+                .as_ref()
+                .and_then(|model| model.cell(cell))
+                .and_then(model::Cell::default_rest),
         }
     }
 
     fn set_typed(&mut self) -> Action<Message> {
-        let Panel::Edit(edit) = &mut self.panel else {
+        let Panel::Edit(edit) = &self.panel else {
             return Action::none();
         };
-        let Typed::Valid(input) = judge(edit.slot, &edit.typed) else {
+        let Typed::Valid(input) = judge(edit.slot, &edit.typed, self.known(&edit.cell)) else {
             return Action::none();
         };
-        edit.listening = false;
         let op = bind_op(&edit.cell, input);
+        if let Panel::Edit(edit) = &mut self.panel {
+            edit.listening = false;
+        }
         self.stage(op)
     }
 
@@ -655,12 +761,20 @@ impl State {
         self.stage_from_panel(op)
     }
 
-    /// Writes the game's "no bind" on the device the cell shows, replacing every entry of its kind.
+    /// Writes the game's "no bind" on the device the cell shows, or on the stick picked for a
+    /// joystick cell, replacing every entry of its kind.
     fn unbind(&mut self) -> Action<Message> {
         let Some((edit, cell)) = self.edited_cell() else {
             return Action::none();
         };
-        let Some(slot) = cell.slot().filter(|_| cell.unbindable()) else {
+        if !cell.unbindable() {
+            return Action::none();
+        }
+        let slot = match edit.cell.kind {
+            DeviceKind::Joystick => Some(edit.slot),
+            _ => cell.slot(),
+        };
+        let Some(slot) = slot else {
             return Action::none();
         };
         let op = Op::Unbind {
@@ -760,7 +874,7 @@ impl State {
     }
 
     fn open_add(&mut self) {
-        if !self.writable() || self.game().is_some() {
+        if !self.writable() || self.game().is_some() || self.game_loading {
             return;
         }
         let map = self.map.clone().unwrap_or_default();
@@ -1017,7 +1131,7 @@ fn add_input(form: &AddForm) -> Option<(Slot, String)> {
     if form.map.trim().is_empty() || form.action.trim().is_empty() {
         return None;
     }
-    match judge(slot, &form.input) {
+    match judge(slot, &form.input, Known::default()) {
         Typed::Valid(input) => Some((slot, input)),
         _ => None,
     }
@@ -1064,6 +1178,46 @@ fn removed_text(count: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit;
+
+    const DEMO: &str = include_str!("../../../tests/fixtures/keybinds/actionmaps.xml");
+
+    #[test]
+    fn the_file_shows_before_the_game_data_arrives() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = testkit::context_with_channels(temp.path(), &["LIVE"]);
+        let live = ctx.channel.clone().unwrap();
+        testkit::write_build(&live, testkit::LIVE_VERSION, testkit::LIVE_CHANGE);
+        testkit::seed_keybinds_game_data(&ctx);
+        let path = live.actionmaps_xml();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, DEMO).unwrap();
+
+        let mut state = State::new();
+        let _ = state.reload(&ctx);
+        assert!(state.game_loading);
+        let dir = live.dir.clone();
+        let _ = state.update(
+            Message::Loaded(dir.clone(), source::load(&live, None)),
+            &ctx,
+        );
+        let without = state.model.as_ref().expect("the file is shown").rows.len();
+        assert!(state.game().is_none());
+        assert!(
+            state.game_loading,
+            "the game's defaults are still on their way"
+        );
+
+        let game = ctx.game_data().load(&live, &ctx.dirs.game_data());
+        let _ = state.update(Message::GameLoaded(dir, game), &ctx);
+        assert!(!state.game_loading);
+        assert!(state.game().is_some());
+        let with = state.model.as_ref().unwrap().rows.len();
+        assert!(
+            with > without,
+            "{with} rows with the game's actions, {without} without"
+        );
+    }
 
     #[test]
     fn edits_that_no_longer_fit_are_called_removed() {

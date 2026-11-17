@@ -38,20 +38,14 @@ pub enum Unavailable {
 }
 
 impl Unavailable {
-    pub fn message(&self) -> String {
-        const TAIL: &str = "so only your own binds are shown.";
+    /// Why the game's data is missing, as one plain sentence. Each screen adds its own lead-in.
+    pub fn reason(&self) -> String {
         match self {
-            Self::NoArchive => format!("This channel has no Data.p4k, {TAIL}"),
-            Self::NoBuildId => format!(
-                "This channel has no build manifest, so the game's defaults cannot be matched to a build, {TAIL}"
-            ),
-            Self::Unreadable(reason) => {
-                format!("The game's Data.p4k could not be read ({reason}), {TAIL}")
-            }
-            Self::Missing(entry) => format!("The game's Data.p4k has no {entry}, {TAIL}"),
-            Self::Encrypted(entry) => {
-                format!("{entry} in the game's Data.p4k is encrypted, {TAIL}")
-            }
+            Self::NoArchive => "This channel has no Data.p4k.".to_string(),
+            Self::NoBuildId => "This channel has no build manifest, so the game's data cannot be matched to a build.".to_string(),
+            Self::Unreadable(reason) => format!("The game's Data.p4k could not be read ({reason})."),
+            Self::Missing(entry) => format!("The game's Data.p4k has no {entry}."),
+            Self::Encrypted(entry) => format!("{entry} in the game's Data.p4k is encrypted."),
         }
     }
 }
@@ -771,23 +765,23 @@ mod tests {
         }
     }
 
-    fn assert_plain(reason: &Unavailable) {
-        let message = reason.message();
-        assert!(!message.is_empty());
+    fn assert_plain(unavailable: &Unavailable) {
+        let reason = unavailable.reason();
+        assert!(!reason.is_empty());
         for debug in ["Unreadable", "Missing", "Encrypted", "NoArchive", "\"", "{"] {
-            assert!(!message.contains(debug), "{message}");
+            assert!(!reason.contains(debug), "{reason}");
         }
-        assert!(
-            message.ends_with("only your own binds are shown."),
-            "{message}"
-        );
+        assert!(reason.ends_with('.'), "{reason}");
+        for screen_words in ["binds", "settings", "shown"] {
+            assert!(!reason.contains(screen_words), "{reason}");
+        }
     }
 
     #[test]
-    fn no_archive_message_reads_as_plain_words() {
+    fn no_archive_reason_reads_as_plain_words() {
         assert_eq!(
-            Unavailable::NoArchive.message(),
-            "This channel has no Data.p4k, so only your own binds are shown."
+            Unavailable::NoArchive.reason(),
+            "This channel has no Data.p4k."
         );
     }
 

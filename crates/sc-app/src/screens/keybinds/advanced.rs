@@ -505,8 +505,8 @@ impl State {
         if !self.writable() && matches!(self.doc, Doc::Ready { .. }) {
             body = body.push(banner(ToastKind::Warning, UNRECOGNISED, None));
         }
-        if let Some(note) = &self.no_game_note {
-            body = body.push(banner(ToastKind::Info, note, None));
+        if let Some(note) = self.game_note() {
+            body = body.push(note);
         }
         if let Some(sheet) = &self.advanced.sheet {
             body = body.push(
