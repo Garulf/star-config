@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.0](https://github.com/Garulf/star-config/compare/v0.1.0...v0.2.0) (2026-11-17)
+
+
+### Features
+
+* **app:** bind stick and gamepad cells from a real press ([6bca636](https://github.com/Garulf/star-config/commit/6bca63668360f6d7150dd826c741b603291fc991))
+* **app:** one capture box for keys, sticks and gamepads ([2a0281f](https://github.com/Garulf/star-config/commit/2a0281f287bd6df7893103661550f7374e0a6ea9))
+* **core:** read USB vendor and product IDs from device GUIDs ([42d4601](https://github.com/Garulf/star-config/commit/42d4601c2619d4ec9ecd234842acd18fb3df30d7))
+* **input:** add the device listening crate with axis thresholds ([7347a7f](https://github.com/Garulf/star-config/commit/7347a7fa0a9650b36fc20532eaf47abafc6a6197))
+* **input:** read gamepads on Windows through XInput ([1512ea9](https://github.com/Garulf/star-config/commit/1512ea9cc2acfd6e0fdcd37f421b70062a890f38))
+* **input:** read sticks and gamepads on Linux through evdev ([cddb6a8](https://github.com/Garulf/star-config/commit/cddb6a8c8ca06dbb8120a2ff4635af610e44a252))
+* **input:** read sticks on Windows through DirectInput ([b90fc52](https://github.com/Garulf/star-config/commit/b90fc5296a1056c0ee46a1b5fd05bb59bd8be9bb))
+
+
+### Bug Fixes
+
+* **app:** name unreadable devices by class and bind only what staged ([7c95831](https://github.com/Garulf/star-config/commit/7c95831423c1a05b891a546dd419c59926e82d6e))
+* **app:** tie device messages to their listen and name unreadable devices per platform ([b1e99a8](https://github.com/Garulf/star-config/commit/b1e99a875fb742e5db1831aff848c3ee893cc161))
+* **input:** bind centred axes from a quarter-range move ([eb93cf0](https://github.com/Garulf/star-config/commit/eb93cf0e263a68465040013471fc97b805a157b5))
+* **input:** keep axis threshold math inside i64 ([acc7430](https://github.com/Garulf/star-config/commit/acc7430441a8f0d3e88de8d4c70c5778d4dec940))
+* **input:** mark DirectInput position axes as positions ([8e1ec46](https://github.com/Garulf/star-config/commit/8e1ec46b6c60a8dcb517454419991b0fc1117790))
+* **input:** read evdev unsynchronized, report initial axes, reject look-alike devices ([44e4b25](https://github.com/Garulf/star-config/commit/44e4b255aae4d7912fa560cf1848f6641f401d60))
+
 ## 0.1.0 (2026-11-17)
 
 
