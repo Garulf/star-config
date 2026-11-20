@@ -30,21 +30,11 @@
             pkgs.rustfmt
             pkgs.rust-analyzer
           ];
-          # `cargo run` has no patched rpath, so the libraries winit and wgpu load at
-          # run time come from here.
-          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (
-            with pkgs;
-            [
-              libGL
-              libx11
-              libxcursor
-              libxi
-              libxkbcommon
-              libxrandr
-              vulkan-loader
-              wayland
-            ]
-          );
+          # `cargo run` has no patched rpath, so the libraries loaded with dlopen at run
+          # time come from here.
+          LD_LIBRARY_PATH =
+            pkgs.lib.makeLibraryPath
+              self.packages.${pkgs.stdenv.hostPlatform.system}.star-config.runtimeLibs;
           ICED_TEST_BACKEND = "tiny-skia";
         };
       });

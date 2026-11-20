@@ -4,6 +4,7 @@
   copyDesktopItems,
   makeBinaryWrapper,
   makeDesktopItem,
+  dbus,
   libGL,
   libx11,
   libxcursor,
@@ -18,8 +19,10 @@
 let
   manifest = lib.importTOML ../Cargo.toml;
 
-  # winit and wgpu load these with dlopen, so the linker never records them.
+  # winit, wgpu and rfd's portal dialog load these with dlopen, so the linker never
+  # records them.
   runtimeLibs = [
+    dbus
     libGL
     libx11
     libxcursor
@@ -87,6 +90,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
     wrapProgram $out/bin/star-config \
       --suffix PATH : "${lib.makeBinPath [ xdg-utils ]}"
   '';
+
+  passthru = { inherit runtimeLibs; };
 
   meta = {
     description = "Edit Star Citizen settings, keybinds, StarStrings, screenshots and channels";
