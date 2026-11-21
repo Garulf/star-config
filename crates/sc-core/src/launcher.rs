@@ -1,7 +1,8 @@
 //! Launcher detection and launching.
 
 use crate::error::{Error, Result};
-use crate::install::{Install, InstallKind, resolve_ci};
+use crate::install::{Install, InstallKind, canonical_or_raw, resolve_ci};
+use crate::prefixes::{LauncherScript, PrefixSources};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -26,18 +27,42 @@ impl LaunchMethod {
 }
 
 pub fn detect(install: &Install, saved_command: Option<&str>) -> Option<LaunchMethod> {
+    detect_in(install, saved_command, &PrefixSources::from_system())
+}
+
+pub fn detect_in(
+    install: &Install,
+    saved_command: Option<&str>,
+    sources: &PrefixSources,
+) -> Option<LaunchMethod> {
     if let Some(line) = saved_command.map(str::trim).filter(|line| !line.is_empty()) {
         return Some(LaunchMethod::Command(line.to_string()));
     }
     let found = |base: &Path, rel: &str| resolve_ci(base, rel).filter(|path| path.is_file());
     match &install.kind {
-        InstallKind::WinePrefix { prefix } => {
-            found(prefix, "sc-launch.sh").map(LaunchMethod::Script)
-        }
+        InstallKind::WinePrefix { prefix } => found(prefix, "sc-launch.sh")
+            .or_else(|| nix_citizen_script(prefix, sources.launcher_scripts()))
+            .map(LaunchMethod::Script),
         InstallKind::Native => {
             found(&install.rsi_dir(), "RSI Launcher/RSI Launcher.exe").map(LaunchMethod::Exe)
         }
     }
+}
+
+/// A script known to start another prefix is never picked.
+fn nix_citizen_script(prefix: &Path, scripts: Vec<LauncherScript>) -> Option<PathBuf> {
+    let wanted = canonical_or_raw(prefix);
+    let starts_this = |script: &LauncherScript| {
+        script
+            .prefix
+            .as_deref()
+            .is_some_and(|baked| canonical_or_raw(baked) == wanted)
+    };
+    let chosen = scripts
+        .iter()
+        .find(|script| starts_this(script))
+        .or_else(|| scripts.iter().find(|script| script.prefix.is_none()))?;
+    Some(chosen.path.clone())
 }
 
 pub fn split_command(line: &str) -> Result<Vec<String>> {
@@ -143,19 +168,46 @@ mod tests {
         }
     }
 
+    fn no_path() -> PrefixSources {
+        PrefixSources::default()
+    }
+
+    fn path_with(dir: &Path, scripts: &[(&str, &str)]) -> PrefixSources {
+        let bin = dir.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        for (name, text) in scripts {
+            fs::write(bin.join(name), text).unwrap();
+        }
+        PrefixSources {
+            path_dirs: vec![bin],
+            ..PrefixSources::default()
+        }
+    }
+
+    fn baking(location: &Path) -> String {
+        format!(
+            "export WINEPREFIX=\"$(readlink -f \"{}\")\"\n",
+            location.display()
+        )
+    }
+
     #[test]
     fn saved_command_wins() {
         let dir = tempdir().unwrap();
         let prefix = dir.path().join("pfx");
         fs::create_dir_all(&prefix).unwrap();
         fs::write(prefix.join("sc-launch.sh"), "").unwrap();
-        let method = detect(&wine_install(&prefix), Some("lutris lutris:rungame/sc"));
+        let method = detect_in(
+            &wine_install(&prefix),
+            Some("lutris lutris:rungame/sc"),
+            &no_path(),
+        );
         assert_eq!(
             method,
             Some(LaunchMethod::Command("lutris lutris:rungame/sc".into()))
         );
         assert!(matches!(
-            detect(&wine_install(&prefix), Some("  ")),
+            detect_in(&wine_install(&prefix), Some("  "), &no_path()),
             Some(LaunchMethod::Script(_))
         ));
     }
@@ -166,12 +218,69 @@ mod tests {
         let prefix = dir.path().join("pfx");
         fs::create_dir_all(&prefix).unwrap();
         fs::write(prefix.join("sc-launch.sh"), "").unwrap();
-        let method = detect(&wine_install(&prefix), None).unwrap();
+        let method = detect_in(&wine_install(&prefix), None, &no_path()).unwrap();
         assert_eq!(method, LaunchMethod::Script(prefix.join("sc-launch.sh")));
         assert!(method.closes_wine_programs());
         assert_eq!(
             method.describe(),
             prefix.join("sc-launch.sh").display().to_string()
+        );
+    }
+
+    #[test]
+    fn falls_back_to_nix_citizen_script_for_its_prefix() {
+        let dir = tempdir().unwrap();
+        let prefix = dir.path().join("pfx");
+        let other = dir.path().join("other");
+        fs::create_dir_all(&prefix).unwrap();
+        let sources = path_with(
+            dir.path(),
+            &[
+                ("rsi-launcher", &baking(&other)),
+                ("star-citizen", &baking(&prefix)),
+            ],
+        );
+        let method = detect_in(&wine_install(&prefix), None, &sources).unwrap();
+        assert_eq!(
+            method,
+            LaunchMethod::Script(dir.path().join("bin/star-citizen"))
+        );
+        assert!(method.closes_wine_programs());
+    }
+
+    #[test]
+    fn nix_citizen_script_for_another_prefix_is_skipped() {
+        let dir = tempdir().unwrap();
+        let prefix = dir.path().join("pfx");
+        fs::create_dir_all(&prefix).unwrap();
+        let sources = path_with(
+            dir.path(),
+            &[("rsi-launcher", &baking(&dir.path().join("other")))],
+        );
+        assert_eq!(detect_in(&wine_install(&prefix), None, &sources), None);
+    }
+
+    #[test]
+    fn unread_nix_citizen_script_is_used_when_nothing_matches() {
+        let dir = tempdir().unwrap();
+        let prefix = dir.path().join("pfx");
+        let sources = path_with(dir.path(), &[("rsi-launcher", "#!/bin/sh\n")]);
+        assert_eq!(
+            detect_in(&wine_install(&prefix), None, &sources),
+            Some(LaunchMethod::Script(dir.path().join("bin/rsi-launcher")))
+        );
+    }
+
+    #[test]
+    fn lug_script_beats_nix_citizen_script() {
+        let dir = tempdir().unwrap();
+        let prefix = dir.path().join("pfx");
+        fs::create_dir_all(&prefix).unwrap();
+        fs::write(prefix.join("sc-launch.sh"), "").unwrap();
+        let sources = path_with(dir.path(), &[("rsi-launcher", &baking(&prefix))]);
+        assert_eq!(
+            detect_in(&wine_install(&prefix), None, &sources),
+            Some(LaunchMethod::Script(prefix.join("sc-launch.sh")))
         );
     }
 
@@ -188,7 +297,7 @@ mod tests {
             root: rsi.join("StarCitizen"),
             kind: InstallKind::Native,
         };
-        let method = detect(&install, None).unwrap();
+        let method = detect_in(&install, None, &no_path()).unwrap();
         assert_eq!(method, LaunchMethod::Exe(exe));
         assert!(!method.closes_wine_programs());
     }
@@ -200,8 +309,11 @@ mod tests {
             root: dir.path().join("RSI/StarCitizen"),
             kind: InstallKind::Native,
         };
-        assert_eq!(detect(&native, None), None);
-        assert_eq!(detect(&wine_install(&dir.path().join("pfx")), None), None);
+        assert_eq!(detect_in(&native, None, &no_path()), None);
+        assert_eq!(
+            detect_in(&wine_install(&dir.path().join("pfx")), None, &no_path()),
+            None
+        );
     }
 
     #[test]
