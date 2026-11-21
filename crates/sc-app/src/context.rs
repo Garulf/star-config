@@ -3,6 +3,7 @@ use sc_core::backup::{BackupStore, Scope};
 use sc_core::dirs::AppDirs;
 use sc_core::guard::Writer;
 use sc_core::install::{Channel, DiscoveryEnv, Install, InstallKind, discover, shown};
+use sc_core::prefixes::PrefixSources;
 use sc_core::process::{GameProbe, RunState, SystemProbe};
 use sc_core::settings::Settings;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
@@ -193,7 +194,7 @@ pub(crate) fn discover_with(request: DiscoveryRequest) -> Vec<Install> {
         DiscoveryEnv::from_system(request.extra)
     } else {
         DiscoveryEnv {
-            home: None,
+            prefixes: PrefixSources::default(),
             drive_roots: Vec::new(),
             extra: request.extra,
         }

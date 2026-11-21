@@ -111,9 +111,11 @@ cargo build --release -p sc-app
 
 ## Usage
 
-1. Start star-config. It looks for the game in `Program Files\Roberts Space Industries` on every
-   fixed disk on Windows, and in `~/Games/star-citizen` on Linux. If your install or Wine prefix
-   is somewhere else, add its folder in Settings.
+1. Start star-config. On Windows it looks for the game in `Program Files\Roberts Space Industries`
+   on every fixed disk. On Linux it checks `~/Games/star-citizen` and `~/Games/rsi-launcher`, the
+   prefix saved by the LUG helper, the prefix baked into nix-citizen's `rsi-launcher` or
+   `star-citizen` command on `PATH`, and `WINEPREFIX`. If your install or Wine prefix is somewhere
+   else, add its folder in Settings.
 2. Pick the channel (LIVE, PTU, HOTFIX) in the top bar.
 3. Change things. Edits are staged, not written. A bar at the bottom counts them and offers
    `Apply` and `Discard`.

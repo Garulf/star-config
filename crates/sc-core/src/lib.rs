@@ -16,6 +16,7 @@ pub mod launcher;
 pub mod localization;
 pub mod lock;
 pub mod p4k;
+pub mod prefixes;
 pub mod process;
 pub mod safe_write;
 pub mod screenshots;

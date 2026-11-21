@@ -1,3 +1,4 @@
+use crate::prefixes::PrefixSources;
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs;
@@ -23,7 +24,7 @@ pub struct Channel {
 }
 
 pub struct DiscoveryEnv {
-    pub home: Option<PathBuf>,
+    pub prefixes: PrefixSources,
     pub drive_roots: Vec<PathBuf>,
     pub extra: Vec<PathBuf>,
 }
@@ -31,7 +32,7 @@ pub struct DiscoveryEnv {
 impl DiscoveryEnv {
     pub fn from_system(extra: Vec<PathBuf>) -> Self {
         Self {
-            home: home_dir(),
+            prefixes: PrefixSources::from_system(),
             drive_roots: fixed_drive_roots(),
             extra,
         }
@@ -136,6 +137,8 @@ pub fn case_conflict(base: &Path, rel: &str) -> Option<(PathBuf, PathBuf)> {
 
 const STAR_CITIZEN_DIR: &str = "StarCitizen";
 const WINE_RSI_PATH: &str = "drive_c/Program Files/Roberts Space Industries/StarCitizen";
+const NIX_CITIZEN_RSI_PATH: &str =
+    "prefix/drive_c/Program Files/Roberts Space Industries/StarCitizen";
 const WINDOWS_RSI_PATH: &str = "Program Files/Roberts Space Industries/StarCitizen";
 const KNOWN_CHANNELS: [&str; 5] = ["LIVE", "PTU", "EPTU", "HOTFIX", "TECH-PREVIEW"];
 
@@ -156,7 +159,7 @@ fn star_citizen_root(path: &Path) -> Option<PathBuf> {
     {
         return Some(parent.to_path_buf());
     }
-    [STAR_CITIZEN_DIR, WINE_RSI_PATH]
+    [STAR_CITIZEN_DIR, NIX_CITIZEN_RSI_PATH, WINE_RSI_PATH]
         .into_iter()
         .filter_map(|rel| resolve_ci(path, rel))
         .find(|candidate| candidate.is_dir())
@@ -181,10 +184,7 @@ fn is_channel_dir(dir: &Path) -> bool {
 }
 
 pub fn discover(env: &DiscoveryEnv) -> Vec<Install> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(home) = &env.home {
-        candidates.push(home.join("Games/star-citizen"));
-    }
+    let mut candidates: Vec<PathBuf> = env.prefixes.candidates();
     candidates.extend(
         env.drive_roots
             .iter()
@@ -550,7 +550,10 @@ mod tests {
             prefix.join("drive_c/Program Files/Roberts Space Industries/StarCitizen");
         touch(&star_citizen.join("LIVE/Data.p4k"));
         let env = DiscoveryEnv {
-            home: Some(home.path().to_path_buf()),
+            prefixes: PrefixSources {
+                home: Some(home.path().to_path_buf()),
+                ..PrefixSources::default()
+            },
             drive_roots: Vec::new(),
             extra: vec![prefix.clone(), star_citizen.clone()],
         };
@@ -558,6 +561,47 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].root, star_citizen);
         assert_eq!(found[0].kind, InstallKind::WinePrefix { prefix });
+    }
+
+    #[test]
+    fn discover_finds_nix_citizen_default_and_its_nested_prefix() {
+        let home = tempdir().unwrap();
+        let location = home.path().join("Games/rsi-launcher");
+        let prefix = location.join("prefix");
+        let star_citizen =
+            prefix.join("drive_c/Program Files/Roberts Space Industries/StarCitizen");
+        touch(&star_citizen.join("LIVE/Data.p4k"));
+        let env = DiscoveryEnv {
+            prefixes: PrefixSources {
+                home: Some(home.path().to_path_buf()),
+                ..PrefixSources::default()
+            },
+            drive_roots: Vec::new(),
+            extra: vec![location.clone()],
+        };
+        let found = discover(&env);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].root, star_citizen);
+        assert_eq!(found[0].kind, InstallKind::WinePrefix { prefix });
+    }
+
+    #[test]
+    fn discover_takes_wineprefix_with_a_game_and_skips_one_without() {
+        let base = tempdir().unwrap();
+        let wine = wine_layout(base.path());
+        let found = |wine_prefix: &Path| {
+            discover(&DiscoveryEnv {
+                prefixes: PrefixSources {
+                    wine_prefix: Some(wine_prefix.to_path_buf()),
+                    ..PrefixSources::default()
+                },
+                drive_roots: Vec::new(),
+                extra: Vec::new(),
+            })
+        };
+        assert_eq!(found(&wine.prefix)[0].root, wine.star_citizen);
+        mkdir(&base.path().join("empty/drive_c"));
+        assert!(found(&base.path().join("empty")).is_empty());
     }
 
     #[test]
@@ -570,7 +614,7 @@ mod tests {
         let extra = tempdir().unwrap();
         let wine = wine_layout(extra.path());
         let env = DiscoveryEnv {
-            home: None,
+            prefixes: PrefixSources::default(),
             drive_roots: vec![drive.path().to_path_buf()],
             extra: vec![wine.prefix.clone()],
         };
