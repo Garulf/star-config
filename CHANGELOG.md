@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/Garulf/star-config/compare/v0.3.0...v0.4.0) (2026-11-21)
+
+
+### Features
+
+* find Wine prefixes outside ~/Games/star-citizen ([#9](https://github.com/Garulf/star-config/issues/9)) ([794fcf9](https://github.com/Garulf/star-config/commit/794fcf97f28efa27825dead9604a18025950d3f4))
+
+
+### Bug Fixes
+
+* **nix:** put libdbus in the rpath so the folder picker opens ([358d9dd](https://github.com/Garulf/star-config/commit/358d9dd143c5b4310a4003c9922fbfdbe4ff4ae8))
+* **nix:** put libdbus in the rpath so the folder picker opens ([b4424fb](https://github.com/Garulf/star-config/commit/b4424fbba8c393f51010fbf6276472d454e64846))
+
 ## [0.3.0](https://github.com/Garulf/star-config/compare/v0.2.0...v0.3.0) (2026-11-17)
 
 
