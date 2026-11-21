@@ -3894,7 +3894,7 @@ dependencies = [
 
 [[package]]
 name = "sc-app"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "chrono",
@@ -3912,7 +3912,7 @@ dependencies = [
 
 [[package]]
 name = "sc-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "directories",
  "flate2",
@@ -3938,7 +3938,7 @@ dependencies = [
 
 [[package]]
 name = "sc-input"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "evdev",
  "windows 0.62.2",
